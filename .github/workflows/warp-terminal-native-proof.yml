@@ -1,0 +1,101 @@
+name: Warp terminal native proof
+
+on:
+  push:
+    branches: [proof/warp-terminal-native]
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          /usr/bin/xcodebuild -version
+
+      - name: Install and register stable Warp
+        run: |
+          brew update
+          brew install --cask warp
+          xattr -dr com.apple.quarantine /Applications/Warp.app || true
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+            -f /Applications/Warp.app
+          test "$(defaults read /Applications/Warp.app/Contents/Info CFBundleIdentifier)" = \
+            "dev.warp.Warp-Stable"
+
+      - name: Complete Warp no-login onboarding
+        env:
+          CODEXBAR_WARP_TERMINAL_PROOF_DIR: ${{ runner.temp }}/warp-terminal-proof
+        run: |
+          mkdir -p "$CODEXBAR_WARP_TERMINAL_PROOF_DIR"
+          open -a Warp
+          sleep 8
+          screencapture -x "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/onboarding-00-welcome.png"
+          for step in 1 2 3; do
+            osascript \
+              -e 'tell application "Warp" to activate' \
+              -e 'delay 1' \
+            -e 'tell application "System Events" to key code 36'
+            sleep 6
+            screencapture -x "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/onboarding-0${step}-after-return.png"
+          done
+          brew install cliclick
+          osascript -e 'tell application "Warp" to activate'
+          cliclick c:711,641
+          sleep 5
+          screencapture -x "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/onboarding-04-skip-confirmation.png" || true
+          osascript \
+            -e 'tell application "Warp" to activate' \
+            -e 'delay 1' \
+            -e 'tell application "System Events" to key code 36'
+          sleep 8
+          screencapture -x "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/onboarding-05-terminal-ready.png" || true
+
+      - name: Restore SwiftPM build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-macos26-arm64-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            swiftpm-macos26-arm64-
+
+      - name: Run cold-start and already-running proof
+        env:
+          CODEXBAR_WARP_TERMINAL_PROOF_DIR: ${{ runner.temp }}/warp-terminal-proof
+          CODEXBAR_WARP_FEATURE_HEAD: 572d352540d0661889bf9f6af3d30ffbacdb601e
+        run: |
+          swift test --filter WarpTerminalNativeProofTests
+          shasum -a 256 \
+            Sources/CodexBar/TerminalApp.swift \
+            Sources/CodexBar/StatusItemController+Actions.swift \
+            Tests/CodexBarTests/WarpTerminalNativeProofTests.swift \
+            > "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/source-sha256.txt"
+          cat "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/receipt.md"
+
+      - name: Capture Warp diagnostics
+        if: always()
+        env:
+          CODEXBAR_WARP_TERMINAL_PROOF_DIR: ${{ runner.temp }}/warp-terminal-proof
+        run: |
+          mkdir -p "$CODEXBAR_WARP_TERMINAL_PROOF_DIR"
+          ps aux | grep -i '[W]arp' > "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/warp-processes.txt" || true
+          find "$HOME/Library/Logs" -maxdepth 3 -iname '*warp*' -print \
+            > "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/warp-log-paths.txt" || true
+          find "$HOME/.warp/tab_configs" -maxdepth 1 -type f -print \
+            > "$CODEXBAR_WARP_TERMINAL_PROOF_DIR/remaining-configs.txt" || true
+
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: warp-terminal-native-proof
+          path: ${{ runner.temp }}/warp-terminal-proof
+          if-no-files-found: warn
