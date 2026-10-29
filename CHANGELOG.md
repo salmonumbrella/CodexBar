@@ -2,6 +2,10 @@
 
 ## 0.82.1 — Unreleased
 
+### Added
+
+- CLI: allow repeated `--remote` hosts for Codex `--identified-only` JSON, deduplicate identified requests across hosts, report per-host sources and collection timestamps, and preserve successful results with a nonzero exit when a host fails.
+
 ## 0.82.0 — 2026-10-26
 
 ### Highlights
