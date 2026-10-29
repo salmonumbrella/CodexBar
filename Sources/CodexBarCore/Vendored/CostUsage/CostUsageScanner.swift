@@ -395,7 +395,7 @@ enum CostUsageScanner {
 
     /// Only the opt-in request export consumes this evidence; it is never persisted.
     enum CodexNativePricingTier: Equatable {
-        case absent, standard, priority, unknown
+        case standard, priority, unknown
     }
 
     struct CodexRequestPricingEvidence {
@@ -3793,11 +3793,12 @@ enum CostUsageScanner {
         case "event_msg":
             if payload["type"] as? String == "thread_settings_applied" {
                 let settings = payload["thread_settings"] as? [String: Any]
-                let tier = Self.codexModelEvidence(settings?["service_tier"] as? String)
+                let suppliedTier = settings?["service_tier"]
+                let tier = Self.codexModelEvidence(suppliedTier as? String)
                 let nativeTier: CodexNativePricingTier = switch tier {
                 case "default": .standard
                 case "priority": .priority
-                default: .unknown
+                default: settings != nil && suppliedTier == nil ? .standard : .unknown
                 }
                 pricingObserver?(nativeTier, nil)
                 return .threadSettingsApplied(priority: tier == "priority")
@@ -4168,7 +4169,7 @@ enum CostUsageScanner {
         var tokenSnapshots: [CostUsageCodexTokenSnapshot] = []
         var lastAcceptedTokenTimestamp: String?
         var requestLedger = initialRequestLedgerState ?? CodexRequestLedgerState()
-        var nativeThreadTier: CodexNativePricingTier = startOffset == 0 ? .absent : .unknown
+        var nativeThreadTier: CodexNativePricingTier = startOffset == 0 ? .standard : .unknown
         var nativeTiersByTurn: [String: CodexNativePricingTier] = [:]
         var nativeTiersByOffset: [Int64: CodexNativePricingTier] = [:]
         var turnStartsByOffset: [Int64: String] = [:]
@@ -4296,7 +4297,7 @@ enum CostUsageScanner {
                 turnID: turnID,
                 turnStartedAt: turnID.flatMap { turnStarts[$0] },
                 nativeTier: turnID.flatMap { nativeTiersByTurn[$0] }
-                    ?? (turnID == nil || nativeThreadTier == .unknown ? nativeThreadTier : .absent),
+                    ?? (turnID == nil || nativeThreadTier == .unknown ? nativeThreadTier : .standard),
                 hasCreatorAccount: codexSession.hasCreatorAccount == true))
             // Identity, rather than cumulative counters, proves that a reset is a new request.
             // Copied parent records fail the ownership check above even if the parent is unavailable.

@@ -2,11 +2,6 @@ import Foundation
 import Testing
 @testable import CodexBarCLI
 @testable import CodexBarCore
-#if canImport(SQLite3)
-import SQLite3
-#else
-import CSQLite3
-#endif
 
 struct CodexRequestSubtotalTests {
     @Test
@@ -16,6 +11,31 @@ struct CodexRequestSubtotalTests {
         let result = try Self.price([ledger, ledger])
         #expect(result.requestCount == 1)
         #expect(try abs(#require(result.costUSD) - 0.0002025) < 1e-12)
+    }
+
+    @Test
+    func `omitted optional native tier keeps copied collection numerically priced`() async throws {
+        let request = try Self.nativeRequest(turn: "turn")
+        let omitted = try Self.loadNative([
+            Self.nativeMetadata, Self.nativeStart("turn"),
+            #"{"type":"event_msg","timestamp":"2026-08-31T11:00:01Z","payload":{"type":"thread_settings_applied","#
+                + #""thread_settings":{"model":"gpt-5"}}}"#,
+            request,
+        ])
+        let standard = try Self.loadNative([
+            Self.nativeMetadata, Self.nativeStart("turn"), Self.nativeSettings("default"), request,
+        ])
+        #expect(omitted.records.first?.pricingMode == "standard")
+        let result = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remote: "fixture-host",
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            local: { omitted },
+            fetchRemote: { _ in standard })
+        #expect(result.subtotal?.requestCount == 1 && result.subtotal?.totalTokens == 110)
+        #expect(result.subtotal?.unpricedRequestCount == 0)
+        #expect(result.subtotal?.costUSD == 0.0002025)
+        #expect(result.allSourcesAvailable && !result.partial)
     }
 
     @Test(arguments: [1, 2])
@@ -396,6 +416,10 @@ struct CodexRequestSubtotalTests {
         #expect(try abs(#require(result.costUSD) - 0.5506) < 1e-12)
         let priority = try Self.price([Self.source([Self.accountingRow(model: "gpt-5.4", mode: "priority")])])
         #expect(try abs(#require(priority.costUSD) - 0.00071) < 1e-12)
+        let olderAlias = try Self.price([Self.source([Self.accountingRow(model: "gpt-5.6")])])
+        let canonical = try Self.price([Self.source([Self.accountingRow(model: "gpt-5.6-sol")])])
+        #expect(olderAlias.requestCount == 1 && olderAlias.totalTokens == 110)
+        #expect(olderAlias.costUSD != nil && olderAlias.costUSD == canonical.costUSD)
     }
 
     @Test
@@ -501,14 +525,34 @@ struct CodexRequestSubtotalTests {
         }
     }
 
-    @Test(arguments: ["default", "standard", "priority", "synthetic-unknown"])
+    @Test(arguments: [
+        "default",
+        "standard",
+        "priority",
+        "synthetic-unknown",
+        "omitted",
+        "null",
+        "missing",
+        "malformed",
+    ])
     func `native tiers retain standard priority and unknown evidence`(tier: String) throws {
+        let settings = switch tier {
+        case "omitted": Self.nativeSettings("default")
+            .replacingOccurrences(of: "\"service_tier\":\"default\"", with: "\"model\":\"gpt-5\"")
+        case "null": Self.nativeSettings("null").replacingOccurrences(of: "\"null\"", with: "null")
+        case "missing": Self.nativeSettings("default")
+            .replacingOccurrences(of: "\"thread_settings\":", with: "\"other_settings\":")
+        case "malformed": Self.nativeSettings("default")
+            .replacingOccurrences(of: "{\"service_tier\":\"default\"}", with: "[]")
+        default: Self.nativeSettings(tier)
+        }
         let ledger = try Self.loadNative([
-            Self.nativeMetadata, Self.nativeSettings(tier), Self.nativeStart("turn"),
+            Self.nativeMetadata, settings, Self.nativeStart("turn"),
             Self.nativeRequest(turn: "turn", model: "gpt-5.4"),
         ])
         let row = try #require(ledger.records.first)
-        let expectedMode: String? = tier == "default" ? "standard" : tier == "priority" ? "priority" : nil
+        let expectedMode: String? = ["default", "omitted"]
+            .contains(tier) ? "standard" : tier == "priority" ? "priority" : nil
         #expect(row.pricingMode == expectedMode)
         let price = try Self.price([ledger])
         #expect(price.unpricedRequestCount == (expectedMode == nil ? 1 : 0))
@@ -565,20 +609,24 @@ struct CodexRequestSubtotalTests {
         #expect(!result.partial)
     }
 
-    @Test(arguments: ["UTC", "Pacific/Kiritimati"])
-    func `trace windows use source calendar and never assume old unmatched turns are standard`(zone: String) throws {
-        let ledger = try Self.loadNative(
-            [
-                Self.nativeMetadata,
-                #"{"type":"turn_context","timestamp":"2026-08-30T23:59:00Z","#
-                    + #""payload":{"turn_id":"turn","model":"gpt-5.4"}}"#,
-                Self.nativeRequest(turn: "turn", model: nil, timestamp: "2026-08-31T00:01:00Z"),
-            ],
-            trace: [(Self.start / 1000 - 60, Self.priorityTrace())],
-            zone: zone)
-        let row = try #require(ledger.records.first)
-        #expect(row.pricingMode == (zone == "UTC" ? nil : "priority"))
-        #expect(try Self.price([ledger]).unpricedRequestCount == (zone == "UTC" ? 1 : 0))
+    @Test(arguments: ["UTC", "America/Los_Angeles", "Pacific/Kiritimati"])
+    func `identified trace bounds and pricing are independent of host zone`(zone: String) throws {
+        for insideWindow in [false, true] {
+            let ledger = try Self.loadNative(
+                [
+                    Self.nativeMetadata,
+                    #"{"type":"turn_context","timestamp":"2026-08-30T23:59:00Z","#
+                        + #""payload":{"turn_id":"turn","model":"gpt-5.4"}}"#,
+                    Self.nativeRequest(turn: "turn", model: nil, timestamp: "2026-08-31T00:01:00Z"),
+                ],
+                trace: [(Self.start / 1000 + (insideWindow ? 30 : -60), Self.priorityTrace())],
+                zone: zone)
+            let result = try Self.price([ledger, ledger])
+            #expect(ledger.records.first?.pricingMode == (insideWindow ? "priority" : nil))
+            #expect(result.requestCount == 1 && result.totalTokens == 110 && !result.partial)
+            #expect(result.unpricedRequestCount == (insideWindow ? 0 : 1))
+            #expect(result.costUSD == (insideWindow ? 0.00071 : nil))
+        }
     }
 
     @Test(arguments: ["timestamp", "model", "tokens", "tier"])
@@ -850,39 +898,17 @@ extension CodexRequestSubtotalTests {
         options.codexSessionsRoot = root
         options.codexTraceDatabaseURL = root.appendingPathComponent("trace.sqlite")
         options.calendar.timeZone = try #require(TimeZone(identifier: zone))
-        if let trace { try Self.writeTrace(trace, at: #require(options.codexTraceDatabaseURL)) }
+        if let trace {
+            let database = try #require(options.codexTraceDatabaseURL)
+            try CodexPrioritySQLiteTests.Fixture.createDatabase(at: database)
+            try CodexPrioritySQLiteTests.Fixture.insert(trace, at: database)
+        }
         if brokenTrace { try Data("not a database".utf8).write(to: #require(options.codexTraceDatabaseURL)) }
         return try CodexRequestLedger.load(
             startUnixMs: start,
             endUnixMs: end,
             options: options,
             checkCancellation: {})
-    }
-
-    private static func writeTrace(_ entries: [(Int64, String)], at url: URL) throws {
-        var database: OpaquePointer?
-        try #require(sqlite3_open(url.path, &database) == SQLITE_OK)
-        defer { sqlite3_close(database) }
-        try #require(sqlite3_exec(
-            database,
-            "CREATE TABLE logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, feedback_log_body TEXT)",
-            nil,
-            nil,
-            nil) == SQLITE_OK)
-        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        for (timestamp, body) in entries {
-            var statement: OpaquePointer?
-            try #require(sqlite3_prepare_v2(
-                database,
-                "INSERT INTO logs (ts, feedback_log_body) VALUES (?, ?)",
-                -1,
-                &statement,
-                nil) == SQLITE_OK)
-            defer { sqlite3_finalize(statement) }
-            sqlite3_bind_int64(statement, 1, timestamp)
-            sqlite3_bind_text(statement, 2, body, -1, transient)
-            try #require(sqlite3_step(statement) == SQLITE_DONE)
-        }
     }
 
     private static func priorityTrace(model: String = "gpt-5.4", thread: String = "fixture-session") -> String {

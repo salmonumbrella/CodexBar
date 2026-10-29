@@ -106,7 +106,8 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
   - Host reports always scan native Codex history only. `--days` and `--refresh` apply on both hosts; each host retains its own calendar and pricing. Both modes reject `--group-by` and `--breakdown`; `--remote` and `--summary-only` cannot be combined. Ordinary `cost` output remains compatible.
   - Remote capture is bounded to 16 KiB per stream during execution, with a 60-second client process timeout. Unsupported versions, invalid totals, overflow, and unexpected output fail closed. Remote failure retains a successful local row and exits nonzero; JSON remains one document. Ctrl-C and termination signals cancel collection and await local SSH subprocess cleanup. The remote scanner follows its SSH server's disconnect behavior and may finish after the client exits.
 - `codexbar cost --provider codex --identified-only --format json --days 30` exports an experimental,
-  versioned native request ledger. Add `--remote build-host` to return source reports and an
+  versioned native request ledger. Local-only output contains per-request rows, without `costUSD` or
+  `unpricedRequestCount`. Add `--remote build-host` to return source reports and a combined
   **identified-request subtotal** from this machine and one SSH host. Both hosts need a CLI supporting
   schema 2. `--identified-end <Unix milliseconds>` pins the inclusive end; the start is UTC midnight
   `days - 1` days earlier. Saved periods and time zones do not change this window.
@@ -117,8 +118,9 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
     timestamps, token categories, normalized billing model, pricing mode (`standard` / `priority` / null),
     and an `includedInPlan` Boolean, without conversation text, account identifiers, paths or raw session IDs.
     Model, mode or inclusion disagreements retain tokens but permanently clear pricing evidence, even after
-    later clean copies or re-export. Trace evidence can differ across hosts. Schema 1 sources are unavailable
-    until their CLI is updated to schema 2; successful local sources survive with a nonzero exit status.
+    later clean copies or re-export. Copying rollout history without equivalent trace evidence can retain
+    tokens while combined dollars remain unknown. Schema 1 sources are unavailable until their CLI is
+    updated to schema 2; successful local sources survive with a nonzero exit status.
   - Combined `costUSD` is an API-equivalent estimate, calculated after deduplication using one collector
     catalog/custom-rate snapshot and each request's timestamp and token threshold. Source-computed dollars
     are never added. Unknown prices produce explicit `costUSD: null` and an `unpricedRequestCount`;

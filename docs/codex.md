@@ -388,8 +388,8 @@ reports an **identified-request subtotal** over one UTC window. Strong native se
 deduplicated; timestamp/token conflicts and legacy/unidentified usage are excluded and reported. Schema 2 exports
 normalized billing model, nullable Standard/Priority mode, and plan-inclusion evidence alongside tokens and time.
 Pricing disagreements retain tokens but permanently clear pricing evidence, including through re-export;
-trace evidence can differ across hosts. The collector prices accepted requests with one local pricing snapshot. `costUSD` is numeric
-only when all accepted requests are priced (an empty set is $0); otherwise it is explicitly null and
+trace evidence can differ across hosts. The collector prices accepted requests with one local pricing snapshot.
+`costUSD` is numeric only when all accepted requests are priced (an empty set is $0); otherwise it is explicitly null and
 `unpricedRequestCount` explains the gap. `partial` remains a source/accounting-coverage flag. These are
 API-equivalent estimates, not complete account spend. Unknown tiers and unsupported Priority rates stay
 unpriced even where ordinary cost reports use a Standard fallback. Qualified Auto-review requests are free

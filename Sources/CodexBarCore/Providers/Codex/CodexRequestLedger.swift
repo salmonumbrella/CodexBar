@@ -83,7 +83,7 @@ public struct CodexRequestLedger: Codable, Sendable {
                   record.inputTokens >= 0, (0...record.inputTokens).contains(record.cacheReadTokens),
                   record.outputTokens >= 0,
                   record.pricingMode.map({ ["standard", "priority"].contains($0) }) ?? true,
-                  record.model.map({ !$0.isEmpty && CostUsagePricing.normalizeCodexModel($0) == $0 }) ?? true,
+                  record.model.map({ !$0.isEmpty }) ?? true,
                   record.reasoningTokens.map({ (0...record.outputTokens).contains($0) }) ?? true,
                   !record.includedInPlan || CostUsageScanner.codexAutoReviewIsIncludedInPlan(
                       model: "codex-auto-review",
@@ -123,17 +123,13 @@ public struct CodexRequestLedger: Codable, Sendable {
             since: Date(timeIntervalSince1970: Double(startUnixMs) / 1000),
             until: Date(timeIntervalSince1970: Double(endUnixMs) / 1000),
             calendar: calendar)
-        let traceRange = CostUsageScanner.CostUsageDayRange(
-            since: Date(timeIntervalSince1970: Double(startUnixMs) / 1000),
-            until: Date(timeIntervalSince1970: Double(endUnixMs) / 1000),
-            calendar: options.calendar)
         let traceURL = CostUsageScanner.resolvedCodexPriorityDatabaseURL(options.codexTraceDatabaseURL)
         let traceWasPresent = FileManager.default.fileExists(atPath: traceURL.path)
         let priority = CostUsageScanner.resolveCodexPriorityTurns(
             databaseURL: traceURL,
-            sinceDayKey: traceRange.sinceKey,
-            untilDayKey: traceRange.untilKey,
-            calendar: traceRange.calendar)
+            sinceDayKey: range.sinceKey,
+            untilDayKey: range.untilKey,
+            calendar: range.calendar)
         let traceIsPresent = traceWasPresent || FileManager.default.fileExists(atPath: traceURL.path)
         let roots = CostUsageScanner.codexSessionsRoots(options: options)
         var files: [URL] = []
@@ -196,7 +192,7 @@ public struct CodexRequestLedger: Codable, Sendable {
                         timestampUnixMs: milliseconds,
                         model: model,
                         evidence: evidence,
-                        trace: TraceEvidence(priority: priority, isPresent: traceIsPresent, range: traceRange))
+                        trace: TraceEvidence(priority: priority, isPresent: traceIsPresent, range: range))
                     let row = CodexRequestRecord(
                         id: id,
                         timestampUnixMs: milliseconds,
