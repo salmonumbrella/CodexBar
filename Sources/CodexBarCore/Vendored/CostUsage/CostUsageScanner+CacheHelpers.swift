@@ -1216,7 +1216,8 @@ extension CostUsageScanner {
             for (index, row) in (usage.codexRows ?? []).enumerated() {
                 guard row.knownCostNanos == nil, row.eventIndex != nil, (row.unpricedTokens ?? 0) == 0,
                       Self.codexAutoReviewIsIncludedInPlan(
-                          model: row.model, timestampUnixMs: row.timestampUnixMs,
+                          model: row.model,
+                          timestampUnixMs: row.timestampUnixMs,
                           hasCreatorAccount: usage.codexSession?.hasCreatorAccount == true),
                       customPricing.rates(
                           providerID: CostUsagePricing.codexModelsDevProviderID,

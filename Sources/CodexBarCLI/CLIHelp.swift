@@ -152,7 +152,8 @@ extension CodexBarCLI {
           over one UTC window (30 days by default); legacy and unidentified usage are excluded.
           Add --remote to deduplicate that export with one SSH host using the same millisecond window.
           Both hosts need schema 2 support. Combined API-price estimates use the collector’s pricing snapshot;
-          unknown prices remain null with unpricedRequestCount. Failures retain an explicitly partial local subtotal.
+          unknown prices remain null with unpricedRequestCount. Pricing disagreements retain tokens, unpriced;
+          timestamp/token conflicts exclude requests. Source failures retain an explicitly partial local subtotal.
           These modes accept --days 1...365, not --period, --summary-only, grouping or breakdown.
 
         Examples:

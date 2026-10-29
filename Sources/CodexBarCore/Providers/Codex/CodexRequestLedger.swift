@@ -15,9 +15,15 @@ public struct CodexRequestRecord: Codable, Sendable, Equatable {
     public let includedInPlan: Bool
 
     init(
-        id: String, timestampUnixMs: Int64, inputTokens: Int, cacheReadTokens: Int,
-        outputTokens: Int, reasoningTokens: Int?, model: String? = nil,
-        pricingMode: String? = nil, includedInPlan: Bool = false)
+        id: String,
+        timestampUnixMs: Int64,
+        inputTokens: Int,
+        cacheReadTokens: Int,
+        outputTokens: Int,
+        reasoningTokens: Int?,
+        model: String? = nil,
+        pricingMode: String? = nil,
+        includedInPlan: Bool = false)
     {
         self.id = id
         self.timestampUnixMs = timestampUnixMs
@@ -79,6 +85,10 @@ public struct CodexRequestLedger: Codable, Sendable {
                   record.pricingMode.map({ ["standard", "priority"].contains($0) }) ?? true,
                   record.model.map({ !$0.isEmpty && CostUsagePricing.normalizeCodexModel($0) == $0 }) ?? true,
                   record.reasoningTokens.map({ (0...record.outputTokens).contains($0) }) ?? true,
+                  !record.includedInPlan || CostUsageScanner.codexAutoReviewIsIncludedInPlan(
+                      model: "codex-auto-review",
+                      timestampUnixMs: record.timestampUnixMs,
+                      hasCreatorAccount: true),
                   !record.inputTokens.addingReportingOverflow(record.outputTokens).overflow
             else { throw RemoteCodexCostError.invalidReport }
             let sum = total.addingReportingOverflow(record.inputTokens + record.outputTokens)
@@ -120,7 +130,9 @@ public struct CodexRequestLedger: Codable, Sendable {
         let traceURL = CostUsageScanner.resolvedCodexPriorityDatabaseURL(options.codexTraceDatabaseURL)
         let traceWasPresent = FileManager.default.fileExists(atPath: traceURL.path)
         let priority = CostUsageScanner.resolveCodexPriorityTurns(
-            databaseURL: traceURL, sinceDayKey: traceRange.sinceKey, untilDayKey: traceRange.untilKey,
+            databaseURL: traceURL,
+            sinceDayKey: traceRange.sinceKey,
+            untilDayKey: traceRange.untilKey,
             calendar: traceRange.calendar)
         let traceIsPresent = traceWasPresent || FileManager.default.fileExists(atPath: traceURL.path)
         let roots = CostUsageScanner.codexSessionsRoots(options: options)
@@ -180,8 +192,11 @@ public struct CodexRequestLedger: Codable, Sendable {
                     let id = Self.digest(["codex", observation.threadID, observation.responseID])
                     let usage = observation.usage
                     let pricing = Self.pricingEvidence(
-                        observation: observation, timestampUnixMs: milliseconds, model: model, evidence: evidence,
-                        priority: priority, traceIsPresent: traceIsPresent, range: traceRange)
+                        observation: observation,
+                        timestampUnixMs: milliseconds,
+                        model: model,
+                        evidence: evidence,
+                        trace: TraceEvidence(priority: priority, isPresent: traceIsPresent, range: traceRange))
                     let row = CodexRequestRecord(
                         id: id,
                         timestampUnixMs: milliseconds,
@@ -189,10 +204,12 @@ public struct CodexRequestLedger: Codable, Sendable {
                         cacheReadTokens: usage.cached,
                         outputTokens: usage.output,
                         reasoningTokens: usage.reasoning.map { min(max(0, $0), max(0, usage.output)) },
-                        model: pricing.model, pricingMode: pricing.mode, includedInPlan: pricing.included)
-                    if let previous = records[id], previous != row { markConflict(id) }
-                    if records.count < Self.maximumRecords || records[id] != nil {
-                        if records[id] == nil { records[id] = row }
+                        model: pricing.model,
+                        pricingMode: pricing.mode,
+                        includedInPlan: pricing.included)
+                    if records.count < Self.maximumRecords || records[id] != nil || conflicts.contains(id) {
+                        Self.reduce(row, records: &records, conflicts: &conflicts)
+                        exceededLimit = exceededLimit || conflicts.count > Self.maximumRecords
                     } else { exceededLimit = true }
                 },
                 rejectedRequestObserver: { observation in
@@ -228,31 +245,69 @@ public struct CodexRequestLedger: Codable, Sendable {
         return ledger
     }
 
+    /// Accounting contradictions exclude an identity; pricing contradictions retain its usage forever unpriced.
+    private static func reduce(
+        _ row: CodexRequestRecord,
+        records: inout [String: CodexRequestRecord],
+        conflicts: inout Set<String>)
+    {
+        guard !conflicts.contains(row.id) else { return }
+        guard let previous = records[row.id] else {
+            records[row.id] = row
+            return
+        }
+        guard previous.timestampUnixMs == row.timestampUnixMs,
+              previous.inputTokens == row.inputTokens,
+              previous.cacheReadTokens == row.cacheReadTokens,
+              previous.outputTokens == row.outputTokens,
+              previous.reasoningTokens == row.reasoningTokens
+        else {
+            conflicts.insert(row.id)
+            records.removeValue(forKey: row.id)
+            return
+        }
+        guard previous != row else { return }
+        // This existing wire representation is absorbing, including after JSON export and another clean copy.
+        records[row.id] = CodexRequestRecord(
+            id: row.id,
+            timestampUnixMs: row.timestampUnixMs,
+            inputTokens: row.inputTokens,
+            cacheReadTokens: row.cacheReadTokens,
+            outputTokens: row.outputTokens,
+            reasoningTokens: row.reasoningTokens)
+    }
+
+    private struct TraceEvidence {
+        let priority: CostUsageScanner.CodexPriorityTurnsResolution
+        let isPresent: Bool
+        let range: CostUsageScanner.CostUsageDayRange
+    }
+
     /// Trace billing identity is evidence even when no rate exists for it.
     private static func pricingEvidence(
         observation: CostUsageScanner.CodexRequestUsageRecord,
         timestampUnixMs: Int64,
         model: String,
         evidence: CostUsageScanner.CodexRequestPricingEvidence,
-        priority: CostUsageScanner.CodexPriorityTurnsResolution,
-        traceIsPresent: Bool,
-        range: CostUsageScanner.CostUsageDayRange) -> (model: String?, mode: String?, included: Bool)
+        trace: TraceEvidence) -> (model: String?, mode: String?, included: Bool)
     {
-        let trace = evidence.turnID.flatMap { priority.turns[$0] }
-        let mismatchedThread = trace?.threadID.map { $0 != observation.threadID } ?? false
-        let validatedTrace = priority.validationPending || mismatchedThread ? nil : trace
+        let turn = evidence.turnID.flatMap { trace.priority.turns[$0] }
+        let mismatchedThread = turn?.threadID.map { $0 != observation.threadID } ?? false
+        let validatedTrace = trace.priority.validationPending || mismatchedThread ? nil : turn
         let normalized = CostUsagePricing.normalizeCodexModel(validatedTrace?.model ?? model)
         let billingModel = mismatchedThread || normalized == CostUsagePricing.codexUnattributedModel ? nil : normalized
         let startedDay = evidence.turnStartedAt.flatMap {
-            CostUsageScanner.dayKeyFromTimestamp($0, calendar: range.calendar)
+            CostUsageScanner.dayKeyFromTimestamp($0, calendar: trace.range.calendar)
         }
         // A bounded query cannot establish absence for a turn that may have begun before it.
-        let coveredTurn = startedDay.map { $0 >= range.sinceKey && $0 <= range.untilKey } ?? false
-        let mode: String? = if priority.validationPending || mismatchedThread || evidence.nativeTier == .unknown {
+        let coveredTurn = startedDay.map { $0 >= trace.range.sinceKey && $0 <= trace.range.untilKey } ?? false
+        let mode: String? = if trace.priority.validationPending || mismatchedThread || evidence.nativeTier == .unknown {
             nil
         } else if validatedTrace != nil || evidence.nativeTier == .priority {
             "priority"
-        } else if !traceIsPresent || coveredTurn {
+        } else if evidence.turnID != nil, evidence.turnStartedAt == nil {
+            nil
+        } else if !trace.isPresent || coveredTurn {
             "standard"
         } else {
             nil
@@ -272,13 +327,15 @@ public struct CodexRequestLedger: Codable, Sendable {
     /// Conflicts remain excluded even when a later source supplies a clean observation of the identity.
     public static func merge(_ ledgers: [Self]) throws -> CodexRequestSubtotal {
         try self.merge(
-            ledgers, catalog: CostUsagePricing.modelsDevCatalog() ?? ModelsDevCatalog(providers: [:]),
+            ledgers,
+            catalog: CostUsagePricing.modelsDevCatalog() ?? ModelsDevCatalog(providers: [:]),
             customPricing: CostUsagePricing.customPricingOverlay())
     }
 
     /// Deterministic injection seam; a complete union uses one collector snapshot and resolver.
     static func merge(
-        _ ledgers: [Self], catalog: ModelsDevCatalog,
+        _ ledgers: [Self],
+        catalog: ModelsDevCatalog,
         customPricing: CostUsageCustomPricing) throws -> CodexRequestSubtotal
     {
         guard let first = ledgers.first else { throw RemoteCodexCostError.unavailable }
@@ -292,8 +349,7 @@ public struct CodexRequestLedger: Codable, Sendable {
             excluded = count.partialValue
             conflicts.formUnion(ledger.conflictingIDs)
             for row in ledger.records {
-                if let previous = records[row.id], previous != row { conflicts.insert(row.id) }
-                if records[row.id] == nil { records[row.id] = row }
+                Self.reduce(row, records: &records, conflicts: &conflicts)
             }
         }
         var total = 0
@@ -325,8 +381,10 @@ public struct CodexRequestLedger: Codable, Sendable {
     }
 
     private static func price(
-        _ row: CodexRequestRecord, catalog: ModelsDevCatalog,
-        customPricing: CostUsageCustomPricing, resolver: CostUsagePricing.CodexResolver) -> Double?
+        _ row: CodexRequestRecord,
+        catalog: ModelsDevCatalog,
+        customPricing: CostUsageCustomPricing,
+        resolver: CostUsagePricing.CodexResolver) -> Double?
     {
         if row.includedInPlan,
            customPricing.rates(
@@ -340,14 +398,24 @@ public struct CodexRequestLedger: Codable, Sendable {
         if mode == "priority" {
             // Unlike ordinary reports, an unsupported Priority rate must remain unknown.
             return CostUsagePricing.codexPriorityCostUSD(
-                model: model, inputTokens: row.inputTokens, cachedInputTokens: row.cacheReadTokens,
-                outputTokens: row.outputTokens, pricingDate: date, modelsDevCatalog: catalog,
-                customPricing: customPricing, pricingResolver: resolver)
+                model: model,
+                inputTokens: row.inputTokens,
+                cachedInputTokens: row.cacheReadTokens,
+                outputTokens: row.outputTokens,
+                pricingDate: date,
+                modelsDevCatalog: catalog,
+                customPricing: customPricing,
+                pricingResolver: resolver)
         }
         return CostUsagePricing.codexCostUSD(
-            model: model, inputTokens: row.inputTokens, cachedInputTokens: row.cacheReadTokens,
-            outputTokens: row.outputTokens, pricingDate: date, modelsDevCatalog: catalog,
-            customPricing: customPricing, pricingResolver: resolver)
+            model: model,
+            inputTokens: row.inputTokens,
+            cachedInputTokens: row.cacheReadTokens,
+            outputTokens: row.outputTokens,
+            pricingDate: date,
+            modelsDevCatalog: catalog,
+            customPricing: customPricing,
+            pricingResolver: resolver)
     }
 
     private static func isDigest(_ value: String) -> Bool {

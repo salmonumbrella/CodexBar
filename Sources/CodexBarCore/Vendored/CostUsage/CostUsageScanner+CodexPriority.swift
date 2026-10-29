@@ -251,7 +251,8 @@ extension CostUsageScanner {
             return self.boundedCodexPriorityTurns(
                 databaseURL: url,
                 sinceDayKey: sinceDayKey,
-                untilDayKey: untilDayKey, calendar: calendar)
+                untilDayKey: untilDayKey,
+                calendar: calendar)
         }
 
         let observationID = self.nextCodexPriorityTurnsObservationID()
@@ -264,8 +265,8 @@ extension CostUsageScanner {
             opened: opened,
             observationID: observationID,
             url: url,
-            sinceDayKey: sinceDayKey,
-            untilDayKey: untilDayKey, calendar: calendar)
+            window: (sinceDayKey, untilDayKey),
+            calendar: calendar)
         guard let idleState = opened.idleState else { return resolution }
         // An immutable connection neither locks nor detects changes. A writer that appeared during
         // the read could have checkpointed pages into the main file, so the result is trusted only
@@ -281,9 +282,10 @@ extension CostUsageScanner {
         opened: OpenedCodexPriorityDatabase,
         observationID: UInt64,
         url: URL,
-        sinceDayKey: String?,
-        untilDayKey: String?, calendar: Calendar) -> CodexPriorityTurnsResolution
+        window: (since: String?, until: String?),
+        calendar: Calendar) -> CodexPriorityTurnsResolution
     {
+        let (sinceDayKey, untilDayKey) = window
         let db = opened.db
         guard let maxRowID = self.maxCodexLogsRowID(db) else {
             return CodexPriorityTurnsResolution(turns: [:], validationPending: true)
@@ -359,7 +361,8 @@ extension CostUsageScanner {
                     turns: self.filteredResolvedCodexPriorityTurns(
                         failedReplacementFallback ?? resolved,
                         sinceDayKey: sinceDayKey,
-                        untilDayKey: untilDayKey, calendar: calendar),
+                        untilDayKey: untilDayKey,
+                        calendar: calendar),
                     validationPending: true)
             }
             updated.lastRowID = maxRowID
@@ -368,7 +371,8 @@ extension CostUsageScanner {
                     turns: self.filteredResolvedCodexPriorityTurns(
                         updated,
                         sinceDayKey: sinceDayKey,
-                        untilDayKey: untilDayKey, calendar: calendar),
+                        untilDayKey: untilDayKey,
+                        calendar: calendar),
                     validationPending: true)
             }
             self.storeCodexPriorityTurnsMemoIfNewer(updated, forPath: url.path)
@@ -380,7 +384,8 @@ extension CostUsageScanner {
                     turns: self.filteredResolvedCodexPriorityTurns(
                         resolved,
                         sinceDayKey: sinceDayKey,
-                        untilDayKey: untilDayKey, calendar: calendar),
+                        untilDayKey: untilDayKey,
+                        calendar: calendar),
                     validationPending: true)
             }
             self.storeCodexPriorityTurnsMemoIfNewer(updated, forPath: url.path)
@@ -393,14 +398,16 @@ extension CostUsageScanner {
             turns: self.filteredResolvedCodexPriorityTurns(
                 resolved,
                 sinceDayKey: sinceDayKey,
-                untilDayKey: untilDayKey, calendar: calendar),
+                untilDayKey: untilDayKey,
+                calendar: calendar),
             validationPending: false)
     }
 
     private static func filteredResolvedCodexPriorityTurns(
         _ state: CodexPriorityTurnsMemoState,
         sinceDayKey: String?,
-        untilDayKey: String?, calendar: Calendar) -> [String: CodexPriorityTurnMetadata]
+        untilDayKey: String?,
+        calendar: Calendar) -> [String: CodexPriorityTurnMetadata]
     {
         var turns = state.turns
         for (turnID, completedModels) in state.priorityCompletedModelsByTurnID {
@@ -421,7 +428,8 @@ extension CostUsageScanner {
     private static func boundedCodexPriorityTurns(
         databaseURL: URL,
         sinceDayKey: String?,
-        untilDayKey: String?, calendar: Calendar) -> CodexPriorityTurnsResolution
+        untilDayKey: String?,
+        calendar: Calendar) -> CodexPriorityTurnsResolution
     {
         guard let opened = self.openCodexPriorityDatabase(at: databaseURL) else {
             return CodexPriorityTurnsResolution(turns: [:], validationPending: true)

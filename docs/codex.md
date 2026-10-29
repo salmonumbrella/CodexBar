@@ -385,9 +385,10 @@ the local result and returns a nonzero exit code. See [CLI host reporting](cli.m
 
 For copied or resumed histories, `cost --provider codex --identified-only --format json --remote <ssh-host>`
 reports an **identified-request subtotal** over one UTC window. Strong native session/response identities are
-deduplicated; conflicting identities and legacy/unidentified usage are excluded and reported. Schema 2 exports
+deduplicated; timestamp/token conflicts and legacy/unidentified usage are excluded and reported. Schema 2 exports
 normalized billing model, nullable Standard/Priority mode, and plan-inclusion evidence alongside tokens and time.
-The collector prices each accepted request with one local catalog/custom-rate snapshot. `costUSD` is numeric
+Pricing disagreements retain tokens but permanently clear pricing evidence, including through re-export;
+trace evidence can differ across hosts. The collector prices accepted requests with one local pricing snapshot. `costUSD` is numeric
 only when all accepted requests are priced (an empty set is $0); otherwise it is explicitly null and
 `unpricedRequestCount` explains the gap. `partial` remains a source/accounting-coverage flag. These are
 API-equivalent estimates, not complete account spend. Unknown tiers and unsupported Priority rates stay

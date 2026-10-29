@@ -108,16 +108,17 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
 - `codexbar cost --provider codex --identified-only --format json --days 30` exports an experimental,
   versioned native request ledger. Add `--remote build-host` to return source reports and an
   **identified-request subtotal** from this machine and one SSH host. Both hosts need a CLI supporting
-  this option. `--identified-end <Unix milliseconds>` pins the inclusive end; the start is UTC midnight
+  schema 2. `--identified-end <Unix milliseconds>` pins the inclusive end; the start is UTC midnight
   `days - 1` days earlier. Saved periods and time zones do not change this window.
   - Only owned native `token_usage_record` events with session/thread and response IDs contribute.
     Legacy token-count events and unidentified usage are excluded; this subtotal is not complete account usage.
-  - Identical copies count once. Contradictory copies of an identity are excluded throughout that merge,
+  - Identical copies count once. Timestamp or token contradictions permanently exclude an identity,
     including after a later matching copy. Identities are length-framed SHA-256 hashes; exported rows contain
     timestamps, token categories, normalized billing model, pricing mode (`standard` / `priority` / null),
     and an `includedInPlan` Boolean, without conversation text, account identifiers, paths or raw session IDs.
-    Schema 2 requires matching timestamps, tokens, model, mode and inclusion evidence; a disagreement stays
-    excluded even after a later clean copy. Schema 1 sources are unavailable until their CLI is updated.
+    Model, mode or inclusion disagreements retain tokens but permanently clear pricing evidence, even after
+    later clean copies or re-export. Trace evidence can differ across hosts. Schema 1 sources are unavailable
+    until their CLI is updated to schema 2; successful local sources survive with a nonzero exit status.
   - Combined `costUSD` is an API-equivalent estimate, calculated after deduplication using one collector
     catalog/custom-rate snapshot and each request's timestamp and token threshold. Source-computed dollars
     are never added. Unknown prices produce explicit `costUSD: null` and an `unpricedRequestCount`;

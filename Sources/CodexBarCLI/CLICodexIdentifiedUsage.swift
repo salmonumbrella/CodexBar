@@ -112,7 +112,8 @@ extension CodexBarCLI {
                     error: reports.isEmpty
                         ? "Local native Codex identified usage is unavailable."
                         :
-                        "Remote identified usage is unavailable. Check SSH and update its CLI for --identified-only."))
+                        "Remote identified usage is unavailable. Check SSH and update its CLI " +
+                        "for schema 2 --identified-only."))
             }
         }
         try Task.checkCancellation()

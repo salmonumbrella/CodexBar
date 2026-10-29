@@ -1061,8 +1061,10 @@ extension CostUsageStoreTests {
         file.scanState.resumePayload = try JSONEncoder().encode(resume)
         if predecessorHash == "e5909f60274b2c47" {
             let settings = CostUsageScanner.CodexRequestLedgerState(
-                turnModels: ["earlier-turn": "gpt-5.4"], activeTurnID: "earlier-turn",
-                threadPriority: true, priorityTurnIDs: ["earlier-turn"])
+                turnModels: ["earlier-turn": "gpt-5.4"],
+                activeTurnID: "earlier-turn",
+                threadPriority: true,
+                priorityTurnIDs: ["earlier-turn"])
             // Keep the actual native settings payload through adoption, not just an opaque placeholder.
             let settingsObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings))
             file.scanState.detailsPayload = try JSONSerialization.data(withJSONObject: [

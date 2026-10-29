@@ -4,7 +4,7 @@
 
 ### Added
 
-- CLI: estimate deduplicated Codex identified-request spend with schema 2 model, tier and plan-inclusion evidence, collector-side pricing, and explicit unpriced-request counts. Unknown prices remain null; source coverage remains separate (#4833).
+- CLI: estimate deduplicated Codex identified-request spend with schema 2 model, tier and plan-inclusion evidence, collector-side pricing, and explicit unpriced-request counts. Pricing disagreements preserve tokens with null prices; accounting conflicts remain excluded and source coverage stays separate (#4833).
 
 ## 0.82.0 — 2026-10-26
 
