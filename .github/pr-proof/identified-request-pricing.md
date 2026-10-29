@@ -84,6 +84,18 @@ Each version-mismatch run exited `1` and reported partial results. The local sub
 
 ## Persisted upgrade coverage
 
-The local cache-upgrade regression uses the exact v0.82.0 parser hash `e5909f60274b2c47` in `CostUsageStoreTests`. `compatible predecessor parser hash adopts without rebuilding` seeds a predecessor snapshot with that hash, requires the upgraded snapshot to match the retained cache/history state, checks `rebuildCount == 0`, and resumes the saved scan cursor. This is the v0.82.0 upgrade evidence; no v0.82.0 CLI run is claimed here.
+The local cache-upgrade regression uses the exact v0.82.0 parser hash `e5909f60274b2c47` in `CostUsageStoreTests`. `compatible predecessor parser hash adopts without rebuilding` seeds a predecessor snapshot with that hash, requires the upgraded snapshot to match the retained cache/history state, checks `rebuildCount == 0`, and resumes the saved scan cursor. The binary-level fixture below complements this in-process regression.
 
 Previously recorded focused verification at the logic head passed 116 tests in 4 suites, including `CostUsageStoreTests`, and 41 tests in 3 suites, including `CodexRequestSubtotalTests`. Other relevant regressions cover `retained report migration preserves compatible rows and clears stale payload` and `optional pricing observation leaves ordinary rows and saved settings unchanged`. These checks cover cache/history and settings retention; they were not rerun for this evidence document.
+
+## v0.82.0-to-head CLI upgrade fixture
+
+This binary-level upgrade control uses a synthetic home and one synthetic Codex session; it does not read a real account. `CodexBarCLI` built from the `v0.82.0` release tag scanned the fixture with `--refresh`, then the CLI built from reviewed head `68f7ae285c60bda3` ran against the same home, config file, and history file.
+
+| Stage | Persisted parser hash | CLI result |
+| --- | --- | --- |
+| v0.82.0 tagged CLI | `e5909f60274b2c47` | Exit 0; 110 tokens, including 100 input, 20 cached input, and 10 output; estimated cost $0.000355; coverage established |
+| Head CLI, normal refresh policy | `9655b6b8ce4c940c` | Exit 0; returned the same 110-token / $0.000355 saved report while cache catch-up remained pending |
+| Head CLI, `--refresh` | `9655b6b8ce4c940c` | Exit 0; reread the same fixture, stored one file and one usage row, and returned the same totals with coverage established |
+
+The history fixture SHA-256 remained `646a2cb9be91bfb70f2d26b85f35e40958796d52c5abf787a3d4fd227ecaf1df`; the synthetic config SHA-256 remained `557babb300946b76c4463bb4cf9f2cbe8a0510ef8b340a4d619034d17b3548a6`. The config included `shareUsageWithCLI: true`, a disabled Codex provider, and a custom accent color. These hashes and outputs contain no real account data. The first head invocation exposes the existing incremental catch-up state; the subsequent forced scan confirms the unchanged history remains readable after the upgrade.
