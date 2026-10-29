@@ -5,31 +5,28 @@ import Foundation
 struct CodexLocalDataScope: Sendable, Equatable {
     let identifier: String
     let codexHome: URL
-    let sqliteHome: URL
     let sessionsRoot: URL
     let archivedSessionsRoot: URL
     let stateDatabaseURL: URL
 
-    static func resolve(
-        options: CostUsageScanner.Options,
-        environment: [String: String] = ProcessInfo.processInfo.environment) -> CodexLocalDataScope
-    {
-        let codexHome: URL = if let sessionsRoot = options.codexSessionsRoot?.standardizedFileURL,
-                                sessionsRoot.lastPathComponent == "sessions"
+    static func resolve(options: CostUsageScanner.Options) -> CodexLocalDataScope {
+        if let sessionsRoot = options.codexSessionsRoot?.standardizedFileURL,
+           sessionsRoot.lastPathComponent == "sessions"
         {
-            sessionsRoot.deletingLastPathComponent()
-        } else if let codexHomePath = Self.nonEmpty(environment["CODEX_HOME"]) {
-            URL(fileURLWithPath: codexHomePath, isDirectory: true).standardizedFileURL
-        } else {
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+            let home = sessionsRoot.deletingLastPathComponent()
+            return self.make(home: home)
         }
 
-        // Follow the producer's config precedence; rollout sessions remain under the selected Codex home.
-        let sqliteHome = CodexThreadMetadataReader.sqliteHomeDirectory(
-            codexHomeDirectory: codexHome,
-            environment: environment,
-            resolvedWorkingDirectory: nil)
-        return self.make(codexHome: codexHome, sqliteHome: sqliteHome)
+        let environment = ProcessInfo.processInfo.environment
+        if let sqliteHome = Self.nonEmpty(environment["CODEX_SQLITE_HOME"]) {
+            let home = URL(fileURLWithPath: sqliteHome, isDirectory: true).standardizedFileURL
+            return self.make(home: home)
+        }
+        if let codexHome = Self.nonEmpty(environment["CODEX_HOME"]) {
+            let home = URL(fileURLWithPath: codexHome, isDirectory: true).standardizedFileURL
+            return self.make(home: home)
+        }
+        return self.make(home: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex"))
     }
 
     func applying(to options: CostUsageScanner.Options) -> CostUsageScanner.Options {
@@ -39,19 +36,14 @@ struct CodexLocalDataScope: Sendable, Equatable {
         return copy
     }
 
-    private static func make(codexHome: URL, sqliteHome: URL) -> CodexLocalDataScope {
-        let standardizedHome = codexHome.standardizedFileURL
-        let standardizedSQLiteHome = sqliteHome.standardizedFileURL
+    private static func make(home: URL) -> CodexLocalDataScope {
+        let standardizedHome = home.standardizedFileURL
         return CodexLocalDataScope(
-            identifier: "codex-workspaces:" + Self.scopeFingerprint(
-                standardizedHome == standardizedSQLiteHome
-                    ? standardizedHome.path
-                    : standardizedHome.path + "\u{0}" + standardizedSQLiteHome.path),
+            identifier: "codex-workspaces:" + Self.scopeFingerprint(standardizedHome.path),
             codexHome: standardizedHome,
-            sqliteHome: standardizedSQLiteHome,
             sessionsRoot: standardizedHome.appendingPathComponent("sessions", isDirectory: true),
             archivedSessionsRoot: standardizedHome.appendingPathComponent("archived_sessions", isDirectory: true),
-            stateDatabaseURL: standardizedSQLiteHome.appendingPathComponent("state_5.sqlite", isDirectory: false))
+            stateDatabaseURL: standardizedHome.appendingPathComponent("state_5.sqlite", isDirectory: false))
     }
 
     /// Stable local identifier for cache partitioning. It is not a security

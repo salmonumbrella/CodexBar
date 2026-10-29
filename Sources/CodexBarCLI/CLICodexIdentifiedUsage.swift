@@ -13,6 +13,11 @@ struct CodexIdentifiedResult: Codable, Sendable {
     let subtotal: CodexRequestSubtotal?
     let allSourcesAvailable: Bool
     let partial: Bool
+    var localLedgerJSON: String?
+
+    enum CodingKeys: String, CodingKey {
+        case reports, subtotal, allSourcesAvailable, partial
+    }
 }
 
 extension CodexBarCLI {
@@ -74,8 +79,8 @@ extension CodexBarCLI {
         }
         do {
             let report = try result.get()
-            if host == nil, let ledger = report.reports.first?.ledger {
-                Self.printJSON(ledger, pretty: output.pretty)
+            if host == nil, let localJSON = report.localLedgerJSON {
+                print(localJSON)
             } else {
                 Self.printJSON(report, pretty: output.pretty)
             }
@@ -96,6 +101,7 @@ extension CodexBarCLI {
     {
         var reports: [CodexIdentifiedSource] = []
         var subtotal: CodexRequestSubtotal?
+        var localLedgerJSON: String?
         let hosts = ["local"] + (remote.map { [$0] } ?? [])
         for (sourceIndex, host) in hosts.enumerated() {
             try Task.checkCancellation()
@@ -103,8 +109,11 @@ extension CodexBarCLI {
                 let ledger = try await (sourceIndex == 0 ? local() : fetchRemote(host))
                 try ledger.validate(startUnixMs: startUnixMs, endUnixMs: endUnixMs)
                 // Bound local producer output; remote bytes were already bounded by the SSH reader.
-                if sourceIndex == 0, Self.encodeJSON(ledger, pretty: pretty) == nil {
-                    throw RemoteCodexCostError.invalidReport
+                if sourceIndex == 0 {
+                    guard let json = Self.encodeJSON(ledger, pretty: pretty) else {
+                        throw RemoteCodexCostError.invalidReport
+                    }
+                    if remote == nil { localLedgerJSON = json }
                 }
                 if remote != nil {
                     // Reject an overflowing union while the earlier sources remain available.
@@ -131,6 +140,7 @@ extension CodexBarCLI {
             reports: reports,
             subtotal: subtotal,
             allSourcesAvailable: available,
-            partial: !available || (subtotal?.partial ?? false))
+            partial: !available || (subtotal?.partial ?? false),
+            localLedgerJSON: localLedgerJSON)
     }
 }

@@ -13,20 +13,27 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test
-    func `unchanged storage homes retain the existing project index identity`() {
-        let home = URL(fileURLWithPath: "/synthetic/codex-round2", isDirectory: true)
-        let options = CostUsageScanner.Options(codexSessionsRoot: home.appendingPathComponent("sessions"))
-        let original = CodexLocalDataScope.resolve(options: options, environment: [:])
-        #expect(original.identifier == "codex-workspaces:b8117a530a6754ae")
-        let explicitSame = CodexLocalDataScope.resolve(
-            options: options, environment: ["CODEX_SQLITE_HOME": home.path])
-        #expect(explicitSame.identifier == original.identifier)
-        let relocated = CodexLocalDataScope.resolve(
-            options: options, environment: ["CODEX_SQLITE_HOME": "/synthetic/other-sqlite"])
-        #expect(relocated.identifier != original.identifier)
-        let another = CodexLocalDataScope.resolve(
-            options: options, environment: ["CODEX_SQLITE_HOME": "/synthetic/third-sqlite"])
-        #expect(another.identifier != relocated.identifier)
+    func `identified export bounds Priority evidence to its padded scan days`() throws {
+        let fixture = try CodexPrioritySQLiteTests.Fixture()
+        defer { fixture.cleanup() }
+        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: fixture.database)
+        try CodexPrioritySQLiteTests.Fixture.insert(
+            [(Self.start / 1000 - 2 * 24 * 3600, CodexPrioritySQLiteTests.Fixture.traceBody(turn: "outside-window"))],
+            at: fixture.database)
+        let history = try [
+            Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart("outside-window"),
+            Self.nativeRequest("bounded-request", turn: "outside-window", model: "gpt-5.4"),
+        ]
+        try Data((history.joined(separator: "\n") + "\n").utf8)
+            .write(to: fixture.sessions.appendingPathComponent("history.jsonl"))
+
+        let ledger = try CodexRequestLedger.load(
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            options: .init(codexSessionsRoot: fixture.sessions, codexTraceDatabaseURL: fixture.database),
+            checkCancellation: {})
+
+        #expect(ledger.records.first?.pricingMode == "standard")
     }
 
     @Test(arguments: [false, true], [
@@ -52,8 +59,18 @@ struct CodexRequestSubtotalTests {
             #expect(report.reports[1].ledger?.records.count == 1)
             #expect(report.subtotal?.totalTokens == 110)
             #expect(!report.allSourcesAvailable && report.partial)
+            let localOnly = try await CodexBarCLI.collectCodexIdentifiedUsage(
+                remote: nil,
+                startUnixMs: Self.start,
+                endUnixMs: Self.end,
+                pretty: pretty,
+                local: { ledger },
+                fetchRemote: { _ in remote })
+            #expect(localOnly.reports[0].ledger == nil && localOnly.localLedgerJSON == nil)
+            #expect(!localOnly.allSourcesAvailable && localOnly.partial)
         } else {
             #expect(report.allSourcesAvailable)
+            #expect(report.localLedgerJSON.map { $0.utf8.count + 1 } == outputBytes)
         }
     }
 
@@ -112,6 +129,14 @@ struct CodexRequestSubtotalTests {
         #expect(report.reports.first?.ledger?.records == ledger.records)
         #expect(report.subtotal == nil)
         #expect(report.allSourcesAvailable)
+        let json = try #require(report.localLedgerJSON)
+        let output = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        #expect(output["schemaVersion"] as? Int == 2)
+        #expect(output["costUSD"] == nil && output["unpricedRequestCount"] == nil)
+        let envelope = try #require(CodexBarCLI.encodeJSON(report, pretty: false))
+        let envelopeObject = try #require(
+            JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any])
+        #expect(envelopeObject["localLedgerJSON"] == nil)
     }
 
     @Test(arguments: [1, 2])
@@ -966,4 +991,21 @@ extension CodexRequestSubtotalTests {
     }
 
     private static let nativeMetadata = #"{"type":"session_meta","payload":{"id":"fixture-session"}}"#
+}
+
+@Suite
+struct CodexLocalDataScopeTests {
+    @Test
+    func `ordinary explicit home scope keeps its existing state database`() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("sqlite_home = \"/synthetic/other-sqlite\"\n".utf8)
+            .write(to: root.appendingPathComponent("config.toml"))
+        let scope = CodexLocalDataScope.resolve(options: .init(
+            codexSessionsRoot: root.appendingPathComponent("sessions")))
+
+        #expect(scope.stateDatabaseURL == root.appendingPathComponent("state_5.sqlite"))
+        #expect(scope.sessionsRoot.path == root.appendingPathComponent("sessions").path)
+    }
 }

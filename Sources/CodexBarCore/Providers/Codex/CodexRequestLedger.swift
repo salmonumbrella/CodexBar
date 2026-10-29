@@ -125,7 +125,6 @@ public struct CodexRequestLedger: Codable, Sendable {
             since: Date(timeIntervalSince1970: Double(startUnixMs) / 1000),
             until: Date(timeIntervalSince1970: Double(endUnixMs) / 1000),
             calendar: calendar)
-        let scope = CodexLocalDataScope.resolve(options: options, environment: environment)
         let hasCustomSessionsRoot = if let sessionsRoot = options.codexSessionsRoot?
             .standardizedFileURL,
             sessionsRoot.lastPathComponent != "sessions"
@@ -137,14 +136,23 @@ public struct CodexRequestLedger: Codable, Sendable {
         }
         var scopedOptions = options
         if !hasCustomSessionsRoot {
-            scopedOptions.codexSessionsRoot = scope.sessionsRoot
+            let codexHome = options.codexSessionsRoot?.standardizedFileURL.deletingLastPathComponent()
+                ?? CodexHomeScope.ambientHomeURL(env: environment)
+            let sqliteHome = CodexThreadMetadataReader.sqliteHomeDirectory(
+                codexHomeDirectory: codexHome,
+                environment: environment,
+                resolvedWorkingDirectory: nil)
+            scopedOptions.codexSessionsRoot = codexHome.appendingPathComponent("sessions", isDirectory: true)
             scopedOptions.codexTraceDatabaseURL = options.codexTraceDatabaseURL
                 ?? CodexPriorityDatabasePath.defaultURL(
                     processName: processName,
                     environment: environment,
-                    codexHome: { scope.sqliteHome })
+                    codexHome: { sqliteHome })
         }
-        let priority = CostUsageScanner.resolveCodexPriorityTurns(databaseURL: scopedOptions.codexTraceDatabaseURL)
+        let priority = CostUsageScanner.resolveCodexPriorityTurns(
+            databaseURL: scopedOptions.codexTraceDatabaseURL,
+            sinceDayKey: range.scanSinceKey,
+            untilDayKey: range.scanUntilKey)
         let roots = CostUsageScanner.codexSessionsRoots(options: scopedOptions)
         var files: [URL] = []
         var foundRoot = false

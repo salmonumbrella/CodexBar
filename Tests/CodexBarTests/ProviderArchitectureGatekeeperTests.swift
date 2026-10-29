@@ -3184,11 +3184,11 @@ struct ProviderArchitectureGatekeeperTests {
             reason: "This exact host integration strips the Claude executable from normalized process arguments."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/CodexLocalDataScope.swift",
-            anchor: "FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(\".codex\")",
+            anchor: "return self.make(home: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(\".codex\"))",
             expectedProviderIDs: ["codex"],
             expectedReferenceCount: 1,
             expectedReferenceFingerprint: ["codex@0"],
-            reason: "This exact fallback selects Codex's default home directory when CODEX_HOME is unset."),
+            reason: "This exact shared construct dispatches a provider-owned capability at the generic integration boundary."),
         AllowedProviderConstruct(
             path: "Sources/CodexBarCore/Config/CodexBarConfig.swift",
             anchor: "region: provider == .alibabatokenplan ? alibabaTokenPlanRegion.rawValue : nil)",
