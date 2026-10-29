@@ -102,9 +102,8 @@ extension CodexBarCLI {
             do {
                 let ledger = try await (sourceIndex == 0 ? local() : fetchRemote(host))
                 try ledger.validate(startUnixMs: startUnixMs, endUnixMs: endUnixMs)
-                // The local producer uses the selected format; SSH always requests compact JSON.
-                let sourceIsPretty = sourceIndex == 0 && pretty
-                guard Self.encodeJSON(ledger, pretty: sourceIsPretty) != nil else {
+                // Bound local producer output; remote bytes were already bounded by the SSH reader.
+                if sourceIndex == 0, Self.encodeJSON(ledger, pretty: pretty) == nil {
                     throw RemoteCodexCostError.invalidReport
                 }
                 if remote != nil {

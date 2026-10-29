@@ -298,9 +298,16 @@ public struct CodexRequestLedger: Codable, Sendable {
         let turn = evidence.turnID.flatMap { trace.turns[$0] }
         let mismatchedThread = turn?.threadID.map { $0 != observation.threadID } ?? false
         let validatedTrace = trace.validationPending || mismatchedThread ? nil : turn
-        let selectedModel = validatedTrace?.model ?? model
-        let billingModel = mismatchedThread || CostUsagePricing.isCodexUnattributedModel(selectedModel)
-            ? nil : selectedModel
+        // A turn trace retains only its latest model. Native per-request evidence survives step switching.
+        // Auto-review names the qualification, so its actual billing model still comes from the trace.
+        let requestModel = CostUsageScanner.codexModelEvidence(observation.model)
+        let selectedModel = requestModel.flatMap { $0 == "codex-auto-review" ? nil : $0 }
+            ?? validatedTrace?.model ?? model
+        let ambiguousModel = requestModel == nil && model != "codex-auto-review"
+            && !CostUsagePricing.isCodexUnattributedModel(model)
+            && (validatedTrace?.model.map { $0 != model } ?? false)
+        let billingModel = mismatchedThread || ambiguousModel
+            || CostUsagePricing.isCodexUnattributedModel(selectedModel) ? nil : selectedModel
         let candidateMode = validatedTrace != nil || evidence.nativeTier == .priority ? "priority"
             : evidence.nativeTier == .standard ? "standard" : nil
         let mode = trace.validationPending || mismatchedThread || evidence.nativeTier == .unknown ? nil : candidateMode

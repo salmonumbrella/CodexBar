@@ -24,10 +24,11 @@ struct CodexLocalDataScope: Sendable, Equatable {
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
         }
 
-        // CODEX_SQLITE_HOME relocates SQLite files only; native rollout sessions stay under CODEX_HOME.
-        let sqliteHome = Self.nonEmpty(environment["CODEX_SQLITE_HOME"])
-            .map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
-            ?? codexHome.standardizedFileURL
+        // Follow the producer's config precedence; rollout sessions remain under the selected Codex home.
+        let sqliteHome = CodexThreadMetadataReader.sqliteHomeDirectory(
+            codexHomeDirectory: codexHome,
+            environment: environment,
+            resolvedWorkingDirectory: nil)
         return self.make(codexHome: codexHome, sqliteHome: sqliteHome)
     }
 
@@ -43,7 +44,9 @@ struct CodexLocalDataScope: Sendable, Equatable {
         let standardizedSQLiteHome = sqliteHome.standardizedFileURL
         return CodexLocalDataScope(
             identifier: "codex-workspaces:" + Self.scopeFingerprint(
-                standardizedHome.path + "\u{0}" + standardizedSQLiteHome.path),
+                standardizedHome == standardizedSQLiteHome
+                    ? standardizedHome.path
+                    : standardizedHome.path + "\u{0}" + standardizedSQLiteHome.path),
             codexHome: standardizedHome,
             sqliteHome: standardizedSQLiteHome,
             sessionsRoot: standardizedHome.appendingPathComponent("sessions", isDirectory: true),

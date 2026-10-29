@@ -12,6 +12,23 @@ struct CodexRequestSubtotalTests {
         self.source([self.accountingRow(model: model, input: input)])
     }
 
+    @Test
+    func `unchanged storage homes retain the existing project index identity`() {
+        let home = URL(fileURLWithPath: "/synthetic/codex-round2", isDirectory: true)
+        let options = CostUsageScanner.Options(codexSessionsRoot: home.appendingPathComponent("sessions"))
+        let original = CodexLocalDataScope.resolve(options: options, environment: [:])
+        #expect(original.identifier == "codex-workspaces:b8117a530a6754ae")
+        let explicitSame = CodexLocalDataScope.resolve(
+            options: options, environment: ["CODEX_SQLITE_HOME": home.path])
+        #expect(explicitSame.identifier == original.identifier)
+        let relocated = CodexLocalDataScope.resolve(
+            options: options, environment: ["CODEX_SQLITE_HOME": "/synthetic/other-sqlite"])
+        #expect(relocated.identifier != original.identifier)
+        let another = CodexLocalDataScope.resolve(
+            options: options, environment: ["CODEX_SQLITE_HOME": "/synthetic/third-sqlite"])
+        #expect(another.identifier != relocated.identifier)
+    }
+
     @Test(arguments: [false, true], [
         CodexRequestLedger.maximumOutputBytes - 1,
         CodexRequestLedger.maximumOutputBytes,
@@ -53,6 +70,32 @@ struct CodexRequestSubtotalTests {
         let emittedBytes = json.map { $0.utf8.count + 1 } ?? 0
 
         #expect(emittedBytes == (outputBytes <= CodexRequestLedger.maximumOutputBytes ? outputBytes : 0))
+    }
+
+    @Test
+    func `remote byte bound applies to received JSON rather than reencoding`() async throws {
+        let remote = Self.source([Self.accountingRow(
+            id: "b", model: String(repeating: "/", count: CodexRequestLedger.maximumOutputBytes / 2), mode: nil)])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        let wire = try #require(String(data: encoder.encode(remote), encoding: .utf8))
+        #expect(wire.utf8.count < CodexRequestLedger.maximumOutputBytes)
+        let fetcher = RemoteCodexCostFetcher(runner: { _, _ in wire })
+        let report = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remote: "fixture-host",
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            local: { Self.ledger() },
+            fetchRemote: { host in
+                try await fetcher.fetchIdentifiedUsage(
+                    host: host, historyDays: 1, startUnixMs: Self.start, endUnixMs: Self.end)
+            })
+        #expect(report.allSourcesAvailable && !report.partial)
+        #expect(report.subtotal?.requestCount == 2)
+        #expect(report.subtotal?.totalTokens == 220)
+        // The envelope is collector output, never an SSH ledger input with a per-source byte cap.
+        let combined = try #require(CodexBarCLI.encodeJSON(report, pretty: false))
+        #expect(combined.utf8.count > CodexRequestLedger.maximumOutputBytes)
     }
 
     @Test
@@ -464,6 +507,40 @@ struct CodexRequestSubtotalTests {
         #expect(ledger.records.filter { $0.model == "gpt-5" && $0.pricingMode == "standard" }.count == 1)
     }
 
+    @Test
+    func `same turn Priority requests retain their own billing models`() throws {
+        let ledger = try Self.loadNative([
+            Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart("turn"),
+            Self.nativeRequest("large", turn: "turn", model: "gpt-5.4"),
+            Self.nativeRequest("mini", turn: "turn", model: "gpt-5.4-mini"),
+        ], trace: [
+            (Self.end / 1000 - 1, CodexPrioritySQLiteTests.Fixture.traceBody(model: "gpt-5.4")),
+            (Self.end / 1000, CodexPrioritySQLiteTests.Fixture.traceBody(model: "gpt-5.4-mini")),
+        ])
+        let exported = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(ledger))
+        #expect(Set(exported.records.compactMap(\.model)) == ["gpt-5.4", "gpt-5.4-mini"])
+        #expect(exported.records.allSatisfy { $0.pricingMode == "priority" })
+        let subtotal = try Self.price([exported])
+        // 5.4: (80 * 5 + 20 * 0.5 + 10 * 30) / 1M = 0.000710.
+        // mini: (80 * 1.5 + 20 * 0.15 + 10 * 9) / 1M = 0.000213.
+        #expect(try abs(#require(subtotal.costUSD) - 0.000923) < 1e-12)
+        #expect(subtotal.requestCount == 2 && subtotal.totalTokens == 220)
+    }
+
+    @Test
+    func `conflicting turn models without request evidence retain unpriced tokens`() throws {
+        let ledger = try Self.loadNative([
+            Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart("turn"),
+            #"{"type":"turn_context","timestamp":"2026-08-31T11:01:00Z","#
+                + #""payload":{"turn_id":"turn","model":"gpt-5.4"}}"#,
+            Self.nativeRequest(turn: "turn", model: nil),
+        ], trace: [(Self.end / 1000, CodexPrioritySQLiteTests.Fixture.traceBody(model: "gpt-5.4-mini"))])
+        let subtotal = try Self.price([ledger])
+        #expect(ledger.records.first?.model == nil)
+        #expect(subtotal.costUSD == nil && subtotal.unpricedRequestCount == 1)
+        #expect(subtotal.requestCount == 1 && subtotal.totalTokens == 110 && !subtotal.partial)
+    }
+
     @Test(arguments: [
         "priority",
         "unmatched",
@@ -479,7 +556,7 @@ struct CodexRequestSubtotalTests {
         if kind == "unknown-native" { lines.append(Self.nativeSettings("synthetic-unknown")) }
         if kind == "unreadable" { lines.append(Self.nativeSettings("default")) }
         lines.append(Self.nativeStart(kind == "unmatched" ? "other-turn" : "turn"))
-        try lines.append(Self.nativeRequest(turn: "turn", model: "gpt-5.4"))
+        try lines.append(Self.nativeRequest(turn: "turn", model: nil))
         let ledger = try Self.loadNative(
             lines,
             trace: kind == "unreadable" ? nil : [(
@@ -597,8 +674,8 @@ struct CodexRequestSubtotalTests {
         #expect(ledger.records.first?.pricingMode == "standard")
     }
 
-    @Test
-    func `identified export separates CODEX_HOME sessions from CODEX_SQLITE_HOME traces`() throws {
+    @Test(arguments: [false, true])
+    func `identified export separates sessions from configured SQLite traces`(configured: Bool) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let selectedHome = root.appendingPathComponent("selected-home", isDirectory: true)
@@ -606,6 +683,11 @@ struct CodexRequestSubtotalTests {
         let sqliteHome = root.appendingPathComponent("sqlite-home", isDirectory: true)
         try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: sqliteHome, withIntermediateDirectories: true)
+
+        if configured {
+            try Data("sqlite_home = \"\(sqliteHome.path)\"\n".utf8)
+                .write(to: selectedHome.appendingPathComponent("config.toml"))
+        }
 
         let turn = "separate-sqlite-home-turn"
         let request = try Self.nativeRequest("separate-sqlite-home-request", turn: turn, model: "gpt-5.4")
@@ -624,12 +706,17 @@ struct CodexRequestSubtotalTests {
             startUnixMs: Self.start,
             endUnixMs: Self.end,
             options: CostUsageScanner.Options(),
-            environment: ["CODEX_HOME": selectedHome.path, "CODEX_SQLITE_HOME": sqliteHome.path],
+            environment: [
+                "CODEX_HOME": selectedHome.path,
+                "CODEX_SQLITE_HOME": configured ? root.appendingPathComponent("wrong-sqlite-home").path : sqliteHome
+                    .path,
+            ],
             processName: "CodexBar",
             checkCancellation: {})
 
-        #expect(ledger.records.first?.pricingMode == "priority")
-        #expect(try abs(#require(Self.price([ledger]).costUSD) - 0.00071) < 1e-12)
+        let exported = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(ledger))
+        #expect(exported.records.first?.pricingMode == "priority")
+        #expect(try abs(#require(Self.price([exported]).costUSD) - 0.00071) < 1e-12)
     }
 
     @Test
@@ -692,16 +779,18 @@ struct CodexRequestSubtotalTests {
         #expect(result.unpricedRequestCount == 1)
     }
 
-    @Test(arguments: ["2026-10-06T06:59:59.999Z", "2026-10-06T07:00:00Z"])
+    @Test(arguments: ["2026-10-06T06:59:59.999Z", "2026-10-06T07:00:00Z"], [false, true])
     func `qualified auto review retains trace billing model through wire and collector override`(
-        timestamp: String) throws
+        timestamp: String, requestModel: Bool) throws
     {
         let cutoff: Int64 = 1_791_270_000_000
         let ledger = try Self.loadNative(
             [
                 #"{"type":"session_meta","payload":{"id":"fixture-session","creator_account_id":"fixture-creator"}}"#,
                 Self.nativeStart("turn").replacingOccurrences(of: "2026-08-31T11:00:00Z", with: timestamp),
-                Self.nativeRequest(turn: "turn", model: "codex-auto-review", timestamp: timestamp),
+                #"{"type":"turn_context","timestamp":""# + timestamp
+                    + #"","payload":{"turn_id":"turn","model":"codex-auto-review"}}"#,
+                Self.nativeRequest(turn: "turn", model: requestModel ? "codex-auto-review" : nil, timestamp: timestamp),
             ],
             trace: [(cutoff / 1000, CodexPrioritySQLiteTests.Fixture.traceBody())],
             start: cutoff - 7 * 3_600_000,
