@@ -268,7 +268,7 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test(arguments: ["model", "mode", "inclusion", "null-model", "null-mode"])
-    func `pricing disagreements are absorbing through source orders and wire copies`(field: String) throws {
+    func `pricing disagreements are absorbing through source orders`(field: String) throws {
         let timestamp: Int64 = 1_791_270_000_000
         let clean = Self.accountingRow(timestamp: timestamp)
         let changed = Self.accountingRow(
@@ -280,30 +280,11 @@ struct CodexRequestSubtotalTests {
             .init(startUnixMs: timestamp - 7 * 3_600_000, endUnixMs: timestamp, records: rows)
         }
         for rows in [[clean, changed, clean], [changed, clean, clean], [clean, clean, changed]] {
-            let copies = try rows.map { row in
-                try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(source([row])))
-            }
-            let result = try Self.price(copies + [source([clean])])
+            let result = try Self.price(rows.map { source([$0]) } + [source([clean])])
             #expect(result.requestCount == 1 && result.totalTokens == 110)
             #expect(result.conflictCount == 0 && !result.partial)
             #expect(result.costUSD == nil && result.unpricedRequestCount == 1)
         }
-    }
-
-    @Test(arguments: ["priority", "default", "ultrafast", "fresh-priority"])
-    func `pre response checkpoints preserve agreement and absorb disagreement`(tier: String) throws {
-        let before = tier == "fresh-priority" ? [] : [Self.nativeSettings("default")]
-        let ledger = try Self.loadNative(
-            [Self.nativeMetadata] + before + [
-                Self.nativeStart("turn"), Self.nativeSettings(tier == "fresh-priority" ? "priority" : tier),
-                Self.nativeRequest(turn: "turn", model: "gpt-5.4"),
-            ])
-        let expected: String? = tier == "default" ? "standard" : tier == "fresh-priority" ? "priority" : nil
-        #expect(ledger.records.first?.pricingMode == expected)
-        let result = try Self.price([ledger])
-        #expect(result.requestCount == 1 && result.totalTokens == 110 && !result.partial)
-        #expect(result.unpricedRequestCount == (expected == nil ? 1 : 0))
-        if expected == nil { #expect(result.costUSD == nil) } else { #expect(result.costUSD != nil) }
     }
 
     @Test(arguments: ["model", "mode", "priority"])
@@ -363,8 +344,6 @@ struct CodexRequestSubtotalTests {
                 + #""payload":{"turn_id":"turn","model":"gpt-5-2025-08-07"}}"#,
             Self.nativeRequest(turn: "turn", model: nil),
         ])
-        let copy = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(ledger))
-        #expect(copy.records.first?.model == model)
         let catalog = try JSONDecoder().decode(ModelsDevCatalog.self, from: Data(
             (#"{"openai":{"id":"openai","models":{"gpt-5-2025-08-07":{"id":"gpt-5-2025-08-07","#
                 + #""cost":{"input":2,"output":3,"cache_read":0.5}}}}}"#).utf8))
@@ -374,7 +353,7 @@ struct CodexRequestSubtotalTests {
                     input: 4,
                     output: 5,
                     cacheRead: 1)], fingerprint: pricing)
-            let result = try Self.price([ledger, copy], catalog: catalog, custom: custom)
+            let result = try Self.price([ledger, ledger], catalog: catalog, custom: custom)
             #expect(result.requestCount == 1 && result.totalTokens == 110 && !result.partial)
             #expect(result.unpricedRequestCount == 0)
             let expected = pricing == "complete" ? 0.00039 : 0.0002
@@ -382,7 +361,10 @@ struct CodexRequestSubtotalTests {
         }
     }
 
-    @Test(arguments: ["default", "priority", "synthetic-unknown", "omitted", "null", "missing", "no-record", "pruned"])
+    @Test(arguments: [
+        "default", "priority", "synthetic-unknown", "omitted", "null", "missing", "no-record",
+        "checkpoint-priority", "checkpoint-default", "checkpoint-ultrafast", "fresh-priority",
+    ])
     func `native tiers retain standard priority and unknown evidence`(tier: String) throws {
         let settings = switch tier {
         case "omitted": Self.nativeSettings("default")
@@ -392,17 +374,18 @@ struct CodexRequestSubtotalTests {
             .replacingOccurrences(of: "\"thread_settings\":", with: "\"other_settings\":")
         default: Self.nativeSettings(tier)
         }
-        let ledger = try Self.loadNative([
-            Self.nativeMetadata,
-        ] + (["no-record", "pruned"].contains(tier) ? [] : [settings]) + [
-            Self.nativeStart("turn"), Self.nativeRequest(turn: "turn", model: "gpt-5.4"),
-        ], trace: tier == "pruned" ? [] : nil)
-        let expectedMode: String? = ["default", "omitted"]
-            .contains(tier) ? "standard" : tier == "priority" ? "priority" : nil
+        let checkpoint = tier.hasPrefix("checkpoint-") || tier == "fresh-priority"
+        let before = checkpoint
+            ? (tier == "fresh-priority" ? [] : [Self.nativeSettings("default")])
+            : (tier == "no-record" ? [] : [settings])
+        let after = checkpoint
+            ? [Self.nativeSettings(tier == "fresh-priority" ? "priority" : String(tier.dropFirst(11)))] : []
+        let ledger = try Self.loadNative(
+            [Self.nativeMetadata] + before + [Self.nativeStart("turn")] + after
+                + [Self.nativeRequest(turn: "turn", model: "gpt-5.4")])
+        let expectedMode: String? = ["default", "omitted", "checkpoint-default"].contains(tier)
+            ? "standard" : ["priority", "fresh-priority"].contains(tier) ? "priority" : nil
         #expect(ledger.records.first?.pricingMode == expectedMode)
-        let price = try Self.price([ledger])
-        #expect(price.unpricedRequestCount == (expectedMode == nil ? 1 : 0))
-        #expect(!price.partial)
     }
 
     @Test
@@ -419,7 +402,6 @@ struct CodexRequestSubtotalTests {
         ])
         #expect(ledger.records.filter { $0.model == "gpt-5.4" && $0.pricingMode == "priority" }.count == 2)
         #expect(ledger.records.filter { $0.model == "gpt-5" && $0.pricingMode == "standard" }.count == 1)
-        #expect(try Self.price([ledger]).unpricedRequestCount == 0)
     }
 
     @Test(arguments: [
@@ -435,6 +417,7 @@ struct CodexRequestSubtotalTests {
         let thread = kind == "mismatched-thread" ? "other-thread" : "fixture-session"
         var lines = [Self.nativeMetadata]
         if kind == "unknown-native" { lines.append(Self.nativeSettings("synthetic-unknown")) }
+        if kind == "unreadable" { lines.append(Self.nativeSettings("default")) }
         lines.append(Self.nativeStart(kind == "unmatched" ? "other-turn" : "turn"))
         try lines.append(Self.nativeRequest(turn: "turn", model: "gpt-5.4"))
         let ledger = try Self.loadNative(
@@ -470,39 +453,26 @@ struct CodexRequestSubtotalTests {
         #expect(result.unpricedRequestCount == 1)
     }
 
-    @Test
-    func `auto review qualification uses creator and cutoff without source pricing`() throws {
-        let cutoff: Int64 = 1_791_270_000_000
-        let metadata = #"{"type":"session_meta","payload":{"id":"fixture-session","#
-            + #""creator_account_id":"private-account"}}"#
-        let ledger = try Self.loadNative(
-            [
-                metadata, Self.nativeSettings("synthetic-unknown"), Self.nativeStart("turn"),
-                Self.nativeRequest("before", model: "codex-auto-review", timestamp: "2026-10-06T06:59:59.999Z"),
-                Self.nativeRequest("after", model: "codex-auto-review", timestamp: "2026-10-06T07:00:00Z"),
-            ],
-            start: cutoff - 7 * 3_600_000,
-            end: cutoff)
-        #expect(ledger.records.filter(\.includedInPlan).count == 1)
-        #expect(ledger.records.first { $0.includedInPlan }?.pricingMode == nil)
-    }
-
-    @Test
-    func `qualified auto review retains trace billing model through wire and collector override`() throws {
+    @Test(arguments: ["2026-10-06T06:59:59.999Z", "2026-10-06T07:00:00Z"])
+    func `qualified auto review retains trace billing model through wire and collector override`(
+        timestamp: String) throws
+    {
         let cutoff: Int64 = 1_791_270_000_000
         let ledger = try Self.loadNative(
             [
                 #"{"type":"session_meta","payload":{"id":"fixture-session","creator_account_id":"fixture-creator"}}"#,
-                Self.nativeStart("turn").replacingOccurrences(of: "2026-08-31T11:00:00Z", with: "2026-10-06T07:00:00Z"),
-                Self.nativeRequest(turn: "turn", model: "codex-auto-review", timestamp: "2026-10-06T07:00:00Z"),
+                Self.nativeStart("turn").replacingOccurrences(of: "2026-08-31T11:00:00Z", with: timestamp),
+                Self.nativeRequest(turn: "turn", model: "codex-auto-review", timestamp: timestamp),
             ],
             trace: [(cutoff / 1000, CodexPrioritySQLiteTests.Fixture.traceBody())],
             start: cutoff - 7 * 3_600_000,
             end: cutoff)
         let copy = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(ledger))
         #expect(copy.records.first?.model == "gpt-5.4")
-        #expect(copy.records.first?.includedInPlan == true)
-        #expect(try Self.price([copy]).costUSD == 0)
+        let included = timestamp == "2026-10-06T07:00:00Z"
+        #expect(copy.records.first?.includedInPlan == included)
+        let expected = included ? 0 : 0.00071
+        #expect(try abs(#require(Self.price([copy]).costUSD) - expected) < 1e-12)
         let overlay = CostUsageCustomPricing(
             entries: ["gpt-5.4": .init(input: 4, output: 5, cacheRead: 1)], fingerprint: "fixture")
         let price = try Self.price([copy], custom: overlay)

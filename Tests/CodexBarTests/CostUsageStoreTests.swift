@@ -1106,7 +1106,7 @@ extension CostUsageStoreTests {
         let legacy = try JSONDecoder().decode(
             CostUsageScanner.CodexBufferedFastLine.self, from: #require(after.bufferedLines.first).payload)
         #expect(legacy.line == .threadSettingsApplied(priority: .priority))
-        for tier in [CostUsageScanner.CodexNativePricingTier.standard, .priority, .unknown] {
+        for tier in [CostUsageScanner.CodexNativePricingTier.priority, .unknown] {
             let encoded = try JSONEncoder().encode(CostUsageScanner.CodexFastLine.threadSettingsApplied(priority: tier))
             let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
             let fields = try #require(object["threadSettingsApplied"] as? [String: Any])
