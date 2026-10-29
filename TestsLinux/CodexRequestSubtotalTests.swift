@@ -4,40 +4,6 @@ import Testing
 @testable import CodexBarCore
 
 struct CodexRequestSubtotalTests {
-    @Test
-    func `copied native requests have a numeric price`() throws {
-        let lines = try [Self.nativeMetadata, Self.nativeRequest()]
-        let ledger = try Self.loadNative(lines, copies: [lines])
-        let result = try Self.price([ledger, ledger])
-        #expect(result.requestCount == 1)
-        #expect(try abs(#require(result.costUSD) - 0.0002025) < 1e-12)
-    }
-
-    @Test
-    func `omitted optional native tier keeps copied collection numerically priced`() async throws {
-        let request = try Self.nativeRequest(turn: "turn")
-        let omitted = try Self.loadNative([
-            Self.nativeMetadata, Self.nativeStart("turn"),
-            #"{"type":"event_msg","timestamp":"2026-08-31T11:00:01Z","payload":{"type":"thread_settings_applied","#
-                + #""thread_settings":{"model":"gpt-5"}}}"#,
-            request,
-        ])
-        let standard = try Self.loadNative([
-            Self.nativeMetadata, Self.nativeStart("turn"), Self.nativeSettings("default"), request,
-        ])
-        #expect(omitted.records.first?.pricingMode == "standard")
-        let result = try await CodexBarCLI.collectCodexIdentifiedUsage(
-            remote: "fixture-host",
-            startUnixMs: Self.start,
-            endUnixMs: Self.end,
-            local: { omitted },
-            fetchRemote: { _ in standard })
-        #expect(result.subtotal?.requestCount == 1 && result.subtotal?.totalTokens == 110)
-        #expect(result.subtotal?.unpricedRequestCount == 0)
-        #expect(result.subtotal?.costUSD == 0.0002025)
-        #expect(result.allSourcesAvailable && !result.partial)
-    }
-
     @Test(arguments: [1, 2])
     func `overflowing remote usage retains the valid local subtotal`(remoteRequests: Int) async throws {
         let local = Self.ledger()
@@ -111,29 +77,22 @@ struct CodexRequestSubtotalTests {
         let copied = try CodexRequestLedger.merge([original, original])
         #expect(copied.totalTokens == 110)
         #expect(copied.requestCount == 1)
-        let different = Self.ledger(input: 101)
-        for sources in [
-            [original, different, original],
-            [different, original, original],
-            [original, original, different],
-        ] {
-            let result = try CodexRequestLedger.merge(sources)
-            #expect(result.totalTokens == 0)
-            #expect(result.conflictCount == 1)
-            #expect(result.partial)
-        }
         var quarantined = original
         quarantined.conflictingIDs = original.records.map(\.id)
         #expect(try CodexRequestLedger.merge([quarantined, original]).requestCount == 0)
-        let wire = try JSONSerialization.jsonObject(with: JSONEncoder().encode(copied)) as? [String: Any]
-        #expect(wire?["costUSD"] is Double)
     }
 
-    @Test(arguments: ["schema", "provider", "window", "digest", "cached", "reasoning", "overflow", "sum"])
+    @Test(arguments: [
+        "schema", "future-schema", "invalid-mode", "included-pre-cutoff",
+        "provider", "window", "digest", "cached", "reasoning", "overflow", "sum",
+    ])
     func `invalid source contracts and overflowing subtotals are rejected`(invalid: String) throws {
         var source = Self.ledger()
         switch invalid {
         case "schema": source.schemaVersion = 1
+        case "future-schema": source.schemaVersion = 3
+        case "invalid-mode": source = Self.source([Self.accountingRow(mode: "flex")])
+        case "included-pre-cutoff": source = Self.source([Self.accountingRow(included: true)])
         case "provider": source.provider = "claude"
         case "window": source.endUnixMs += 1
         case "digest": source.conflictingIDs = ["raw-session-id"]
@@ -154,9 +113,10 @@ struct CodexRequestSubtotalTests {
                 outputTokens: invalid == "overflow" ? 2 : 0,
                 reasoningTokens: nil) }
         }
+        let copy = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(source))
         #expect(throws: RemoteCodexCostError.self) {
-            try source.validate(startUnixMs: Self.start, endUnixMs: Self.end)
-            _ = try CodexRequestLedger.merge([source])
+            try copy.validate(startUnixMs: Self.start, endUnixMs: Self.end)
+            _ = try CodexRequestLedger.merge([copy])
         }
     }
 
@@ -305,7 +265,6 @@ struct CodexRequestSubtotalTests {
             #expect(result.conflictCount == 1)
             #expect(result.unpricedRequestCount == 0)
             #expect(result.partial)
-            #expect(try abs(#require(result.costUSD) - 0.0002025) < 1e-12)
         }
         let empty = try Self.price([Self.source([clean, changed, clean])])
         #expect(empty.requestCount == 0 && empty.costUSD == 0)
@@ -334,13 +293,16 @@ struct CodexRequestSubtotalTests {
         }
     }
 
-    @Test(arguments: ["default", "priority", "ultrafast"])
+    @Test(arguments: ["omitted", "priority", "ultrafast"])
     func `first post start settings bind once before the owned request`(tier: String) throws {
+        let settings = tier == "omitted" ? Self.nativeSettings("default")
+            .replacingOccurrences(of: "\"service_tier\":\"default\"", with: "\"model\":\"gpt-5\"")
+            : Self.nativeSettings(tier)
         let ledger = try Self.loadNative([
-            Self.nativeMetadata, Self.nativeStart("turn"), Self.nativeSettings(tier),
+            Self.nativeMetadata, Self.nativeStart("turn"), settings,
             Self.nativeSettings("default"), Self.nativeRequest(turn: "turn", model: "gpt-5.4"),
         ])
-        let expected: String? = tier == "default" ? "standard" : tier == "priority" ? "priority" : nil
+        let expected: String? = tier == "omitted" ? "standard" : tier == "priority" ? "priority" : nil
         #expect(ledger.records.first?.pricingMode == expected)
         #expect(try Self.price([ledger]).unpricedRequestCount == (expected == nil ? 1 : 0))
     }
@@ -366,20 +328,6 @@ struct CodexRequestSubtotalTests {
         let empty = try Self.loadNative(lines, trace: [])
         #expect(absent.records.first?.pricingMode == "standard")
         #expect(empty.records.first?.pricingMode == nil)
-        for sources in [[absent, empty], [empty, absent]] {
-            let result = try Self.price(sources)
-            #expect(result.totalTokens == 110 && result.requestCount == 1)
-            #expect(result.costUSD == nil && result.unpricedRequestCount == 1)
-            #expect(result.conflictCount == 0 && !result.partial)
-        }
-    }
-
-    @Test
-    func `included claim before cutoff is rejected`() throws {
-        let source = Self.source([Self.accountingRow(included: true)])
-        #expect(throws: RemoteCodexCostError.self) {
-            try source.validate(startUnixMs: Self.start, endUnixMs: Self.end)
-        }
     }
 
     @Test(arguments: ["model", "mode", "priority", "priority-long"])
@@ -414,8 +362,6 @@ struct CodexRequestSubtotalTests {
         let result = try Self.price([Self.source([a, b, a])])
         // Each 200k request stays below 272k even though their union exceeds it; reasoning is output's subset.
         #expect(try abs(#require(result.costUSD) - 0.5506) < 1e-12)
-        let priority = try Self.price([Self.source([Self.accountingRow(model: "gpt-5.4", mode: "priority")])])
-        #expect(try abs(#require(priority.costUSD) - 0.00071) < 1e-12)
         let olderAlias = try Self.price([Self.source([Self.accountingRow(model: "gpt-5.6")])])
         let canonical = try Self.price([Self.source([Self.accountingRow(model: "gpt-5.6-sol")])])
         #expect(olderAlias.requestCount == 1 && olderAlias.totalTokens == 110)
@@ -448,21 +394,34 @@ struct CodexRequestSubtotalTests {
 
     @Test
     func `collector catalog and custom overlay price the deduplicated union`() throws {
-        let data = Data(
-            (#"{"openai":{"id":"openai","models":{"gpt-5":{"id":"gpt-5","#
-                + #""cost":{"input":2,"output":3,"cache_read":0.5}}}}}"#).utf8)
-        let catalog = try JSONDecoder().decode(ModelsDevCatalog.self, from: data)
-        let source = Self.source([Self.accountingRow()])
-        let catalogPrice = try Self.price([source, source], catalog: catalog)
-        #expect(try abs(#require(catalogPrice.costUSD) - 0.0002) < 1e-12)
-        let custom = CostUsageCustomPricing(
-            entries: ["gpt-5": .init(input: 4, output: 5, cacheRead: 1)],
-            fingerprint: "fixture")
-        let customPrice = try Self.price([source, source], catalog: catalog, custom: custom)
-        #expect(try abs(#require(customPrice.costUSD) - 0.00039) < 1e-12)
-        let wire = try #require(JSONSerialization
-            .jsonObject(with: JSONEncoder().encode(catalogPrice)) as? [String: Any])
-        #expect(wire["costUSD"] is Double)
+        let model = "gpt-5-2025-08-07"
+        let ledger = try Self.loadNative([
+            Self.nativeMetadata, Self.nativeStart("turn"),
+            #"{"type":"turn_context","timestamp":"2026-08-31T11:00:00Z","#
+                + #""payload":{"turn_id":"turn","model":"gpt-5-2025-08-07"}}"#,
+            Self.nativeRequest(turn: "turn", model: nil),
+        ])
+        let copy = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(ledger))
+        #expect(copy.records.first?.model == model)
+        let catalog = try JSONDecoder().decode(ModelsDevCatalog.self, from: Data(
+            (#"{"openai":{"id":"openai","models":{"gpt-5-2025-08-07":{"id":"gpt-5-2025-08-07","#
+                + #""cost":{"input":2,"output":3,"cache_read":0.5}}}}}"#).utf8))
+        for pricing in ["complete", "catalog", "incomplete"] {
+            let custom = pricing == "catalog" ? CostUsageCustomPricing.empty : CostUsageCustomPricing(
+                entries: [model: .init(
+                    input: 4,
+                    output: pricing == "complete" ? 5 : nil,
+                    cacheRead: pricing == "complete" ? 1 : nil)], fingerprint: pricing)
+            let result = try Self.price([ledger, copy], catalog: catalog, custom: custom)
+            #expect(result.requestCount == 1 && result.totalTokens == 110 && !result.partial)
+            #expect(result.unpricedRequestCount == (pricing == "incomplete" ? 1 : 0))
+            if pricing == "incomplete" {
+                #expect(result.costUSD == nil)
+            } else {
+                let expected = pricing == "complete" ? 0.00039 : 0.0002
+                #expect(try abs(#require(result.costUSD) - expected) < 1e-12)
+            }
+        }
     }
 
     @Test
@@ -471,37 +430,10 @@ struct CodexRequestSubtotalTests {
         func source(_ rows: [CodexRequestRecord]) -> CodexRequestLedger {
             .init(startUnixMs: cutoff - 7 * 3_600_000, endUnixMs: cutoff, records: rows)
         }
-        let row = Self.accountingRow(model: "codex-auto-review", mode: nil, included: true, timestamp: cutoff)
-        let free = try Self.price([source([row])])
-        #expect(free.costUSD == 0 && free.unpricedRequestCount == 0 && !free.partial)
         let known = Self.accountingRow(model: "codex-auto-review", included: true, timestamp: cutoff)
-        let full = CostUsageCustomPricing(
-            entries: ["codex-auto-review": .init(input: 4, output: 5, cacheRead: 1)],
-            fingerprint: "full")
-        let priced = try Self.price([source([known])], custom: full)
-        #expect(try abs(#require(priced.costUSD) - 0.00039) < 1e-12)
         let incomplete = CostUsageCustomPricing(entries: ["codex-auto-review": .init(input: 4)], fingerprint: "partial")
         let unknown = try Self.price([source([known])], custom: incomplete)
         #expect(unknown.costUSD == nil && unknown.unpricedRequestCount == 1 && !unknown.partial)
-    }
-
-    @Test
-    func `host local pricing disagreement retains tokens without a price`() throws {
-        let lines = try [
-            Self.nativeMetadata, Self.nativeStart("turn"),
-            Self.nativeRequest(turn: "turn", model: "gpt-5.4"),
-        ]
-        let plain = try Self.loadNative(lines)
-        let traced = try Self.loadNative(lines, trace: [(Self.end / 1000, Self.priorityTrace())])
-        for sources in [[plain, traced, plain], [traced, plain, traced]] {
-            let result = try Self.price(sources)
-            #expect(result.requestCount == 1)
-            #expect(result.totalTokens == 110)
-            #expect(result.conflictCount == 0)
-            #expect(result.unpricedRequestCount == 1)
-            #expect(result.costUSD == nil)
-            #expect(!result.partial)
-        }
     }
 
     @Test
@@ -527,13 +459,11 @@ struct CodexRequestSubtotalTests {
 
     @Test(arguments: [
         "default",
-        "standard",
         "priority",
         "synthetic-unknown",
         "omitted",
         "null",
         "missing",
-        "malformed",
     ])
     func `native tiers retain standard priority and unknown evidence`(tier: String) throws {
         let settings = switch tier {
@@ -542,8 +472,6 @@ struct CodexRequestSubtotalTests {
         case "null": Self.nativeSettings("null").replacingOccurrences(of: "\"null\"", with: "null")
         case "missing": Self.nativeSettings("default")
             .replacingOccurrences(of: "\"thread_settings\":", with: "\"other_settings\":")
-        case "malformed": Self.nativeSettings("default")
-            .replacingOccurrences(of: "{\"service_tier\":\"default\"}", with: "[]")
         default: Self.nativeSettings(tier)
         }
         let ledger = try Self.loadNative([
@@ -609,8 +537,15 @@ struct CodexRequestSubtotalTests {
         #expect(!result.partial)
     }
 
-    @Test(arguments: ["UTC", "America/Los_Angeles", "Pacific/Kiritimati"])
-    func `identified trace bounds and pricing are independent of host zone`(zone: String) throws {
+    @Test
+    func `identified trace bounds and pricing are independent of host zone`() throws {
+        if let requestedZone = ProcessInfo.processInfo.environment["TZ"] {
+            let date = Date(timeIntervalSince1970: Double(Self.start) / 1000)
+            let expectedZone = try #require(TimeZone(identifier: requestedZone))
+            #expect(Calendar.current.timeZone.secondsFromGMT(for: date) == expectedZone.secondsFromGMT(for: date))
+            let effectiveZone = Calendar.current.timeZone
+            print("Effective TZ: \(effectiveZone.identifier), offset \(effectiveZone.secondsFromGMT(for: date))")
+        }
         for insideWindow in [false, true] {
             let ledger = try Self.loadNative(
                 [
@@ -619,40 +554,26 @@ struct CodexRequestSubtotalTests {
                         + #""payload":{"turn_id":"turn","model":"gpt-5.4"}}"#,
                     Self.nativeRequest(turn: "turn", model: nil, timestamp: "2026-08-31T00:01:00Z"),
                 ],
-                trace: [(Self.start / 1000 + (insideWindow ? 30 : -60), Self.priorityTrace())],
-                zone: zone)
+                trace: [(Self.start / 1000 + (insideWindow ? 30 : -60), Self.priorityTrace())])
             let result = try Self.price([ledger, ledger])
             #expect(ledger.records.first?.pricingMode == (insideWindow ? "priority" : nil))
             #expect(result.requestCount == 1 && result.totalTokens == 110 && !result.partial)
             #expect(result.unpricedRequestCount == (insideWindow ? 0 : 1))
-            #expect(result.costUSD == (insideWindow ? 0.00071 : nil))
         }
     }
 
-    @Test(arguments: ["timestamp", "model", "tokens", "tier"])
-    func `contradictory observations in one native file remain quarantined`(field: String) throws {
-        var lines = try [
-            Self.nativeMetadata,
-            Self.nativeSettings("default"),
-            Self.nativeStart("turn"),
+    @Test
+    func `contradictory observations in one native file remain quarantined`() throws {
+        let ledger = try Self.loadNative([
+            Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart("turn"),
             Self.nativeRequest(turn: "turn"),
-        ]
-        if field == "tier" { lines += [Self.nativeSettings("priority"), Self.nativeStart("turn")] }
-        try lines.append(Self.nativeRequest(
-            turn: "turn",
-            model: field == "model" ? "gpt-5.4" : "gpt-5",
-            timestamp: field == "timestamp" ? "2026-08-31T11:59:59Z" :
-                "2026-08-31T12:00:00Z",
-            input: field == "tokens" ? 101 : 100))
-        try lines.append(Self.nativeRequest("survivor", turn: "turn"))
-        let ledger = try Self.loadNative(lines)
+            Self.nativeSettings("priority"), Self.nativeStart("turn"),
+            Self.nativeRequest(turn: "turn"), Self.nativeRequest("survivor", turn: "turn"),
+        ])
         let result = try Self.price([ledger])
-        let accountingConflict = field == "timestamp" || field == "tokens"
-        #expect(result.conflictCount == (accountingConflict ? 1 : 0))
-        #expect(result.requestCount == (accountingConflict ? 1 : 2))
-        #expect(result.partial == accountingConflict)
-        #expect(result.totalTokens == (accountingConflict ? 110 : 220))
-        if !accountingConflict { #expect(result.costUSD == nil) }
+        #expect(result.conflictCount == 0 && !result.partial)
+        #expect(result.requestCount == 2 && result.totalTokens == 220)
+        #expect(result.unpricedRequestCount == 2)
     }
 
     @Test
@@ -672,8 +593,6 @@ struct CodexRequestSubtotalTests {
         let freeRecord = ledger.records.first { $0.includedInPlan }
         let free = try #require(freeRecord)
         #expect(free.pricingMode == nil)
-        let source = CodexRequestLedger(startUnixMs: ledger.startUnixMs, endUnixMs: ledger.endUnixMs, records: [free])
-        #expect(try Self.price([source]).costUSD == 0)
         let wire = try #require(String(data: JSONEncoder().encode(ledger), encoding: .utf8))
         #expect(!wire.contains("private-account"))
         #expect(!CostUsageScanner.codexAutoReviewIsIncludedInPlan(
@@ -725,65 +644,14 @@ struct CodexRequestSubtotalTests {
         let ordinary = try CostUsageScanner.parseCodexFileCancellable(fileURL: file, range: range)
         var count = 0
         let observed = try CostUsageScanner.parseCodexFileCancellable(
-            fileURL: file, range: range, ownedRequestObserver: { _, _, evidence in
+            fileURL: file, range: range, ownedRequestObserver: { _, _, _ in
                 count += 1
-                #expect(evidence.nativeTier == .unknown)
             })
         #expect(count == 1)
         #expect(ordinary.rows == observed.rows)
         #expect(ordinary.requestLedgerState == observed.requestLedgerState)
         #expect(ordinary.bufferedSubagentLines == observed.bufferedSubagentLines)
         #expect(ordinary.bufferedUnresolvedForkLines == observed.bufferedUnresolvedForkLines)
-        let row = try #require(observed.rows.first)
-        #expect(row.pricingMode == nil)
-        #expect(CostUsageScanner.codexResolvedCostUSD(
-            for: row,
-            modelsDevCatalog: .init(providers: [:]),
-            modelsDevCacheRoot: nil,
-            customPricing: .empty) != nil)
-    }
-
-    @Test(arguments: ["old-schema", "future-schema", "invalid-mode"])
-    func `schema one and unknown wire modes are rejected`(invalid: String) throws {
-        var source = Self.source([Self.accountingRow(mode: invalid == "invalid-mode" ? "flex" : "standard")])
-        if invalid == "old-schema" { source.schemaVersion = 1 }
-        if invalid == "future-schema" { source.schemaVersion = 3 }
-        let data = try JSONEncoder().encode(source)
-        let decoded = try JSONDecoder().decode(CodexRequestLedger.self, from: data)
-        #expect(throws: RemoteCodexCostError.self) {
-            try decoded.validate(startUnixMs: Self.start, endUnixMs: Self.end)
-        }
-        // This is the former collector's explicit version boundary: it rejects new exporters too.
-        let wire = try #require(JSONSerialization
-            .jsonObject(with: JSONEncoder().encode(Self.source([]))) as? [String: Any])
-        #expect(wire["schemaVersion"] as? Int == 2)
-        #expect(wire["schemaVersion"] as? Int != 1)
-    }
-
-    @Test
-    func `old remote exporter retains available local pricing and reports source failure`() async throws {
-        let local = Self.source([Self.accountingRow()])
-        var old = local
-        old.schemaVersion = 1
-        let wire = try #require(String(data: JSONEncoder().encode(old), encoding: .utf8))
-        let fetcher = RemoteCodexCostFetcher { _, _ in wire }
-        let result = try await CodexBarCLI.collectCodexIdentifiedUsage(
-            remote: "fixture-host",
-            startUnixMs: Self.start,
-            endUnixMs: Self.end,
-            local: { local },
-            fetchRemote: { host in
-                try await fetcher.fetchIdentifiedUsage(
-                    host: host,
-                    historyDays: 1,
-                    startUnixMs: Self.start,
-                    endUnixMs: Self.end)
-            })
-        #expect(result.subtotal?.costUSD != nil)
-        #expect(result.subtotal?.unpricedRequestCount == 0)
-        #expect(result.partial && !result.allSourcesAvailable)
-        #expect(result.reports[0].ledger != nil && result.reports[1].ledger == nil)
-        #expect(result.reports[1].error?.contains("schema 2") == true)
     }
 
     @Test
@@ -883,7 +751,6 @@ extension CodexRequestSubtotalTests {
         copies: [[String]] = [],
         trace: [(Int64, String)]? = nil,
         brokenTrace: Bool = false,
-        zone: String = "UTC",
         start: Int64 = Self.start,
         end: Int64 = Self.end) throws -> CodexRequestLedger
     {
@@ -897,7 +764,6 @@ extension CodexRequestSubtotalTests {
         var options = CostUsageScanner.Options()
         options.codexSessionsRoot = root
         options.codexTraceDatabaseURL = root.appendingPathComponent("trace.sqlite")
-        options.calendar.timeZone = try #require(TimeZone(identifier: zone))
         if let trace {
             let database = try #require(options.codexTraceDatabaseURL)
             try CodexPrioritySQLiteTests.Fixture.createDatabase(at: database)

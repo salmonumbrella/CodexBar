@@ -115,7 +115,7 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
     Legacy token-count events and unidentified usage are excluded; this subtotal is not complete account usage.
   - Identical copies count once. Timestamp or token contradictions permanently exclude an identity,
     including after a later matching copy. Identities are length-framed SHA-256 hashes; exported rows contain
-    timestamps, token categories, normalized billing model, pricing mode (`standard` / `priority` / null),
+    timestamps, token categories, exact billing model identifier, pricing mode (`standard` / `priority` / null),
     and an `includedInPlan` Boolean, without conversation text, account identifiers, paths or raw session IDs.
     Model, mode or inclusion disagreements retain tokens but permanently clear pricing evidence, even after
     later clean copies or re-export. Copying rollout history without equivalent trace evidence can retain

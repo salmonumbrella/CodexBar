@@ -290,8 +290,9 @@ public struct CodexRequestLedger: Codable, Sendable {
         let turn = evidence.turnID.flatMap { trace.priority.turns[$0] }
         let mismatchedThread = turn?.threadID.map { $0 != observation.threadID } ?? false
         let validatedTrace = trace.priority.validationPending || mismatchedThread ? nil : turn
-        let normalized = CostUsagePricing.normalizeCodexModel(validatedTrace?.model ?? model)
-        let billingModel = mismatchedThread || normalized == CostUsagePricing.codexUnattributedModel ? nil : normalized
+        let selectedModel = validatedTrace?.model ?? model
+        let billingModel = mismatchedThread || CostUsagePricing.isCodexUnattributedModel(selectedModel)
+            ? nil : selectedModel
         let startedDay = evidence.turnStartedAt.flatMap {
             CostUsageScanner.dayKeyFromTimestamp($0, calendar: trace.range.calendar)
         }

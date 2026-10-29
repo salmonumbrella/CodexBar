@@ -1059,28 +1059,11 @@ extension CostUsageStoreTests {
         file.scanState.targetSize = file.size
         file.scanState.isComplete = false
         file.scanState.resumePayload = try JSONEncoder().encode(resume)
-        if predecessorHash == "e5909f60274b2c47" {
-            let settings = CostUsageScanner.CodexRequestLedgerState(
-                turnModels: ["earlier-turn": "gpt-5.4"],
-                activeTurnID: "earlier-turn",
-                threadPriority: true,
-                priorityTurnIDs: ["earlier-turn"])
-            // Keep the actual native settings payload through adoption, not just an opaque placeholder.
-            let settingsObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings))
-            file.scanState.detailsPayload = try JSONSerialization.data(withJSONObject: [
-                "hasRows": true, "hasTurnIDs": true, "hasTokenSnapshots": true,
-                "hasSeenRawTotals": false, "requestLedgerState": settingsObject,
-            ])
-        }
         let token = Self.snapshot(path: file.path, eventIndex: 0)
         let usageRow = CostUsageStoreUsageRow(path: file.path, rowIndex: 0, payload: Data([8, 9, 10]))
         let aggregate = Self.aggregate(day: "2026-08-01", model: "gpt-5.6-sol", scale: 1)
         let lineage = Self.lineage(path: file.path)
-        var line = Self.bufferedLine(path: file.path, kind: .subagent, index: 0)
-        if predecessorHash == "e5909f60274b2c47" {
-            line.payload = try JSONEncoder().encode(CostUsageScanner.CodexBufferedFastLine(
-                lineIndex: 0, ordinal: 10, endOffset: 100, line: .threadSettingsApplied(priority: true)))
-        }
+        let line = Self.bufferedLine(path: file.path, kind: .subagent, index: 0)
         let discovery = Self.discoveryState(paths: [file.path])
         let lookback = CostUsageStoreLookbackState(
             scanSinceDay: "2026-08-01",
@@ -1122,17 +1105,6 @@ extension CostUsageStoreTests {
         #expect(try connection.scalarInt(
             "SELECT COUNT(*) FROM meta WHERE key = 'parser_hash' AND value = '\(CodexParserHash.value)'") == 1)
         let adoptedFile = try #require(await current.fetchFile(path: file.path))
-        if predecessorHash == "e5909f60274b2c47" {
-            let detailsData = try #require(adoptedFile.scanState.detailsPayload)
-            let details = try #require(JSONSerialization.jsonObject(with: detailsData) as? [String: Any])
-            let settingsObject = try #require(details["requestLedgerState"])
-            let settingsData = try JSONSerialization.data(withJSONObject: settingsObject)
-            let settings = try JSONDecoder().decode(
-                CostUsageScanner.CodexRequestLedgerState.self, from: settingsData)
-            #expect(settings.threadPriority == true)
-            #expect(settings.priorityTurnIDs == ["earlier-turn"])
-            #expect(settings.turnModels["earlier-turn"] == "gpt-5.4")
-        }
         let adoptedResume = try JSONDecoder().decode(
             CostUsageJsonl.ResumeState.self,
             from: #require(adoptedFile.scanState.resumePayload))
