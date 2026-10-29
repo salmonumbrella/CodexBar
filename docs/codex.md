@@ -394,6 +394,8 @@ trace evidence can differ across hosts. The collector prices accepted requests w
 API-equivalent estimates, not complete account spend. Unknown tiers and unsupported Priority rates stay
 unpriced even where ordinary cost reports use a Standard fallback. Qualified Auto-review requests are free
 unless collector custom rates override them; exporter custom rates do not change their qualification.
+Last recorded tiers are estimates: live `/fast` changes may not be materialized in history. Experimental
+`step_model_switching` can exceed the available turn-level model/tier evidence.
 Both CLIs must support schema 2. This opt-in mode does not change ordinary reports or account quota.
 
 - Menu source selection:

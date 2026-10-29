@@ -126,8 +126,8 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
     are never added. Unknown prices produce explicit `costUSD: null` and an `unpricedRequestCount`;
     an empty accepted set is $0. Price incompleteness alone does not set the coverage flag `partial`.
     Qualified Auto-review usage is included at $0 unless the collector supplies custom rates. Unknown native
-    tiers, unvalidated trace evidence and unsupported Priority rates stay unpriced. Missing optional trace
-    databases permit Standard defaults; a missing bounded trace match cannot establish an older turn's tier.
+    tiers, missing tier records and unsupported Priority rates stay unpriced; retained traces only add Priority.
+    The last recorded tier is an estimate and can lag unmaterialized live `/fast` changes.
     Collection uses the existing one-shot SSH safeguards, with no persistent ledger. Exports are limited to
     50,000 records and conflict IDs and 32 MiB; exceeding a limit rejects the source rather than truncating usage.
     An unavailable source retains successful source data, marks the result partial, and exits nonzero.

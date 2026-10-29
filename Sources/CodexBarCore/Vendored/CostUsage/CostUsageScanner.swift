@@ -393,15 +393,21 @@ enum CostUsageScanner {
         }
     }
 
-    /// Only the opt-in request export consumes this evidence; it is never persisted.
-    enum CodexNativePricingTier: Equatable {
+    enum CodexNativePricingTier: Codable, Equatable {
         case standard, priority, unknown
+
+        init(from decoder: Decoder) throws {
+            self = try decoder.singleValueContainer().decode(Bool.self) ? .priority : .standard
+        }
+
+        func encode(to encoder: Encoder) throws {
+            try (self == .priority).encode(to: encoder)
+        }
     }
 
     struct CodexRequestPricingEvidence {
         var turnID: String?
-        var turnStartedAt: String?
-        var nativeTier: CodexNativePricingTier
+        var nativeTier: CodexNativePricingTier?
         var hasCreatorAccount: Bool
     }
 
@@ -3500,7 +3506,7 @@ enum CostUsageScanner {
         case sessionMeta(CodexSessionMetadata)
         case turnContext(CodexTurnContextMetadata)
         case interAgentCommunication(triggerTurn: Bool)
-        case threadSettingsApplied(priority: Bool)
+        case threadSettingsApplied(priority: CodexNativePricingTier)
         case taskStarted(turnID: String?)
         case taskCompleted(CodexTurnPerformanceCompletion)
         case tokenCount(CodexTokenCountRecord)
@@ -3663,10 +3669,7 @@ enum CostUsageScanner {
             reasoning: integer(Self.codexJSONFieldReasoningOutputTokens).map { min(max(0, $0), output) })
     }
 
-    private static func parseCodexFastLine(
-        _ bytes: Data,
-        pricingObserver: ((CodexNativePricingTier?, String?) -> Void)? = nil) -> CodexFastLine?
-    {
+    private static func parseCodexFastLine(_ bytes: Data) -> CodexFastLine? {
         bytes.withUnsafeBytes { rawBytes in
             let buffer = rawBytes.bindMemory(to: UInt8.self)
             let root = 0..<buffer.count
@@ -3689,7 +3692,7 @@ enum CostUsageScanner {
                 // Ownership has one decoder for compact and fallback JSON, including escaped field names.
                 guard let decoded = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any]
                 else { return nil }
-                return Self.codexLine(from: decoded, pricingObserver: pricingObserver)
+                return Self.codexLine(from: decoded)
             case "turn_context":
                 return .turnContext(CodexTurnContextMetadata(
                     timestamp: timestamp,
@@ -3725,12 +3728,9 @@ enum CostUsageScanner {
                 if payloadType == "thread_settings_applied" || payloadType == "task_complete" {
                     guard let decoded = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any]
                     else { return nil }
-                    return Self.codexLine(from: decoded, pricingObserver: pricingObserver)
+                    return Self.codexLine(from: decoded)
                 }
-                if payloadType == "task_started" {
-                    pricingObserver?(nil, timestamp)
-                    return .taskStarted(turnID: turnID)
-                }
+                if payloadType == "task_started" { return .taskStarted(turnID: turnID) }
                 guard payloadType == "token_count", let timestamp, let info else { return nil }
                 return .tokenCount(CodexTokenCountRecord(
                     timestamp: timestamp,
@@ -3747,10 +3747,7 @@ enum CostUsageScanner {
         }
     }
 
-    private static func codexLine(
-        from object: [String: Any],
-        pricingObserver: ((CodexNativePricingTier?, String?) -> Void)? = nil) -> CodexFastLine?
-    {
+    private static func codexLine(from object: [String: Any]) -> CodexFastLine? {
         if let metadata = codexSessionMetadata(from: object) { return .sessionMeta(metadata) }
         let payload = object["payload"] as? [String: Any] ?? [:]
         guard let timestamp = object["timestamp"] as? String,
@@ -3794,17 +3791,14 @@ enum CostUsageScanner {
             if payload["type"] as? String == "thread_settings_applied" {
                 let settings = payload["thread_settings"] as? [String: Any]
                 let suppliedTier = settings?["service_tier"]
-                let tier = Self.codexModelEvidence(suppliedTier as? String)
-                let nativeTier: CodexNativePricingTier = switch tier {
+                let tier: CodexNativePricingTier = switch Self.codexModelEvidence(suppliedTier as? String) {
                 case "default": .standard
                 case "priority": .priority
                 default: settings != nil && suppliedTier == nil ? .standard : .unknown
                 }
-                pricingObserver?(nativeTier, nil)
-                return .threadSettingsApplied(priority: tier == "priority")
+                return .threadSettingsApplied(priority: tier)
             }
             if payload["type"] as? String == "task_started" {
-                pricingObserver?(nil, timestamp)
                 return .taskStarted(turnID: Self.codexTurnID(from: payload))
             }
             if payload["type"] as? String == "task_complete" {
@@ -4169,11 +4163,9 @@ enum CostUsageScanner {
         var tokenSnapshots: [CostUsageCodexTokenSnapshot] = []
         var lastAcceptedTokenTimestamp: String?
         var requestLedger = initialRequestLedgerState ?? CodexRequestLedgerState()
-        var nativeThreadTier: CodexNativePricingTier = startOffset == 0 ? .standard : .unknown
-        var nativeTiersByTurn: [String: CodexNativePricingTier] = [:]
-        var nativeTiersByOffset: [Int64: CodexNativePricingTier] = [:]
-        var turnStartsByOffset: [Int64: String] = [:]
-        var turnStarts: [String: String] = [:]
+        var nativeThreadTier: CodexNativePricingTier?
+        // A nil value is a started turn without a record; a missing key is an unobserved turn.
+        var nativeTiersByTurn: [String: CodexNativePricingTier?] = [:]
         var pendingTierTurn: String?
         var replacedLegacyRowIndices: Set<Int> = []
         var ledgerLegacyPricingKeys: [Int: CodexSourcePricingKey] = [:]
@@ -4295,9 +4287,7 @@ enum CostUsageScanner {
             if pendingTierTurn == turnID { pendingTierTurn = nil }
             ownedRequestObserver?(record, model, CodexRequestPricingEvidence(
                 turnID: turnID,
-                turnStartedAt: turnID.flatMap { turnStarts[$0] },
-                nativeTier: turnID.flatMap { nativeTiersByTurn[$0] }
-                    ?? (turnID == nil || nativeThreadTier == .unknown ? nativeThreadTier : .standard),
+                nativeTier: turnID.map { nativeTiersByTurn[$0] ?? .unknown } ?? nativeThreadTier,
                 hasCreatorAccount: codexSession.hasCreatorAccount == true))
             // Identity, rather than cumulative counters, proves that a reset is a new request.
             // Copied parent records fail the ownership check above even if the parent is unavailable.
@@ -4919,32 +4909,18 @@ enum CostUsageScanner {
             requestLedger.turnPerformance?[turnID] = performance
         }
 
-        func captureRequestPricingLine(
-            tier: CodexNativePricingTier?,
-            startedAt: String?,
-            endOffset: Int64)
-        {
+        func applyRequestPricingSettings(_ tier: CodexNativePricingTier) {
             guard ownedRequestObserver != nil else { return }
-            if let tier { nativeTiersByOffset[endOffset] = tier }
-            if let startedAt { turnStartsByOffset[endOffset] = startedAt }
+            nativeThreadTier = tier
+            guard let turnID = pendingTierTurn else { return }
+            let prior = nativeTiersByTurn[turnID].flatMap(\.self)
+            nativeTiersByTurn.updateValue(prior.map { $0 == tier ? tier : .unknown } ?? tier, forKey: turnID)
         }
 
-        func applyRequestPricingSettings(_ priority: Bool, sourceEndOffset: Int64?) {
-            guard ownedRequestObserver != nil else { return }
-            nativeThreadTier = sourceEndOffset.flatMap { nativeTiersByOffset[$0] }
-                ?? (priority ? .priority : .unknown)
-            if let turnID = pendingTierTurn {
-                nativeTiersByTurn[turnID] = nativeThreadTier
-                pendingTierTurn = nil
-            }
-        }
-
-        func startRequestPricingTurn(_ turnID: String?, sourceEndOffset: Int64?) {
+        func startRequestPricingTurn(_ turnID: String?) {
             guard ownedRequestObserver != nil else { return }
             pendingTierTurn = turnID
-            guard let turnID else { return }
-            nativeTiersByTurn[turnID] = nativeThreadTier
-            turnStarts[turnID] = sourceEndOffset.flatMap { turnStartsByOffset[$0] }
+            if let turnID { nativeTiersByTurn.updateValue(nativeThreadTier, forKey: turnID) }
         }
 
         @discardableResult
@@ -4974,15 +4950,15 @@ enum CostUsageScanner {
                 observePerformanceEffort(metadata)
             case .interAgentCommunication:
                 break
-            case let .threadSettingsApplied(priority):
-                requestLedger.threadPriority = priority
-                applyRequestPricingSettings(priority, sourceEndOffset: sourceEndOffset)
+            case let .threadSettingsApplied(tier):
+                requestLedger.threadPriority = tier == .priority
+                applyRequestPricingSettings(tier)
             case .mirrorBoundary:
                 requestLedger.clearPendingMirrors()
             case let .taskStarted(turnID):
                 requestLedger.clearPendingMirrors()
                 currentTurnID = turnID
-                startRequestPricingTurn(turnID, sourceEndOffset: sourceEndOffset)
+                startRequestPricingTurn(turnID)
                 if requestLedger.threadPriority == true {
                     if requestLedger.priorityTurnIDs == nil { requestLedger.priorityTurnIDs = [] }
                     requestLedger.priorityTurnIDs?.insert(turnID ?? "")
@@ -5153,19 +5129,18 @@ enum CostUsageScanner {
                         return
                     }
 
-                    let decodedObject: [String: Any]? = if scanIssueObserver != nil {
-                        (try? JSONSerialization.jsonObject(with: line.bytes)) as? [String: Any]
-                    } else {
-                        nil
+                    if scanIssueObserver != nil {
+                        let malformed = autoreleasepool {
+                            (try? JSONSerialization.jsonObject(with: line.bytes)) as? [String: Any] == nil
+                        }
+                        if malformed { scanIssueObserver?(); return }
                     }
-                    if scanIssueObserver != nil, decodedObject == nil { scanIssueObserver?(); return }
 
                     if !line.bytes.containsAscii(#""token_usage_record""#), line.bytes.containsAscii(#""usage""#) {
                         autoreleasepool {
-                            guard let obj = decodedObject
-                                ?? (try? JSONSerialization.jsonObject(with: line.bytes)) as? [String: Any],
-                                obj["type"] == nil,
-                                let bare = Self.codexBareUsage(from: obj)
+                            guard let obj = (try? JSONSerialization.jsonObject(with: line.bytes)) as? [String: Any],
+                                  obj["type"] == nil,
+                                  let bare = Self.codexBareUsage(from: obj)
                             else { return }
                             if handleBareUsage(
                                 totals: bare.totals,
@@ -5202,16 +5177,7 @@ enum CostUsageScanner {
                         return
                     }
 
-                    let observePricing: ((CodexNativePricingTier?, String?) -> Void)? = ownedRequestObserver == nil
-                        ? nil : { tier, startedAt in
-                            captureRequestPricingLine(tier: tier, startedAt: startedAt, endOffset: line.endOffset)
-                        }
-                    let decodedLine = if let decodedObject {
-                        Self.codexLine(from: decodedObject, pricingObserver: observePricing)
-                    } else {
-                        Self.parseCodexFastLine(line.bytes, pricingObserver: observePricing)
-                    }
-                    if let fastLine = decodedLine {
+                    if let fastLine = Self.parseCodexFastLine(line.bytes) {
                         let ordinal = Self.codexLineOrdinal(line.bytes)
                         let timestampValidity = fastLine.requiresValidTimestamp
                             ? Self.codexFastLineTimestampValidity(line.bytes)
@@ -5235,13 +5201,12 @@ enum CostUsageScanner {
                     }
 
                     autoreleasepool {
-                        guard let object = decodedObject
-                            ?? (try? JSONSerialization.jsonObject(with: line.bytes)) as? [String: Any]
+                        guard let object = (try? JSONSerialization.jsonObject(with: line.bytes)) as? [String: Any]
                         else {
                             scanIssueObserver?()
                             return
                         }
-                        guard let parsedLine = Self.codexLine(from: object, pricingObserver: observePricing) else {
+                        guard let parsedLine = Self.codexLine(from: object) else {
                             if object["type"] as? String == "token_usage_record" { scanIssueObserver?() }
                             return
                         }

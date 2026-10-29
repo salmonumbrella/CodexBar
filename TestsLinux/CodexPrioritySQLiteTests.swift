@@ -158,10 +158,19 @@ struct CodexPrioritySQLiteTests {
         }
 
         func insert(turn: String, priority: Bool) throws {
-            let body = "thread_id=\(turn)-session turn.id=\(turn) websocket request: "
-                + "{\"type\":\"response.create\",\"model\":\"gpt-5.4\","
-                + "\"service_tier\":\"\(priority ? "priority" : "default")\"}"
+            let body = Self.traceBody(turn: turn, thread: "\(turn)-session", priority: priority)
             try Self.insert([(Int64(self.now.timeIntervalSince1970), body)], at: self.database)
+        }
+
+        static func traceBody(
+            turn: String = "turn",
+            thread: String = "fixture-session",
+            model: String = "gpt-5.4",
+            priority: Bool = true) -> String
+        {
+            "thread_id=\(thread) turn.id=\(turn) websocket request: "
+                + "{\"type\":\"response.create\",\"model\":\"\(model)\","
+                + "\"service_tier\":\"\(priority ? "priority" : "default")\"}"
         }
 
         static func insert(_ entries: [(Int64, String)], at database: URL) throws {

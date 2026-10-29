@@ -123,14 +123,7 @@ public struct CodexRequestLedger: Codable, Sendable {
             since: Date(timeIntervalSince1970: Double(startUnixMs) / 1000),
             until: Date(timeIntervalSince1970: Double(endUnixMs) / 1000),
             calendar: calendar)
-        let traceURL = CostUsageScanner.resolvedCodexPriorityDatabaseURL(options.codexTraceDatabaseURL)
-        let traceWasPresent = FileManager.default.fileExists(atPath: traceURL.path)
-        let priority = CostUsageScanner.resolveCodexPriorityTurns(
-            databaseURL: traceURL,
-            sinceDayKey: range.sinceKey,
-            untilDayKey: range.untilKey,
-            calendar: range.calendar)
-        let traceIsPresent = traceWasPresent || FileManager.default.fileExists(atPath: traceURL.path)
+        let priority = CostUsageScanner.resolveCodexPriorityTurns(databaseURL: options.codexTraceDatabaseURL)
         let roots = CostUsageScanner.codexSessionsRoots(options: options)
         var files: [URL] = []
         var foundRoot = false
@@ -192,7 +185,7 @@ public struct CodexRequestLedger: Codable, Sendable {
                         timestampUnixMs: milliseconds,
                         model: model,
                         evidence: evidence,
-                        trace: TraceEvidence(priority: priority, isPresent: traceIsPresent, range: range))
+                        trace: priority)
                     let row = CodexRequestRecord(
                         id: id,
                         timestampUnixMs: milliseconds,
@@ -273,42 +266,23 @@ public struct CodexRequestLedger: Codable, Sendable {
             reasoningTokens: row.reasoningTokens)
     }
 
-    private struct TraceEvidence {
-        let priority: CostUsageScanner.CodexPriorityTurnsResolution
-        let isPresent: Bool
-        let range: CostUsageScanner.CostUsageDayRange
-    }
-
     /// Trace billing identity is evidence even when no rate exists for it.
     private static func pricingEvidence(
         observation: CostUsageScanner.CodexRequestUsageRecord,
         timestampUnixMs: Int64,
         model: String,
         evidence: CostUsageScanner.CodexRequestPricingEvidence,
-        trace: TraceEvidence) -> (model: String?, mode: String?, included: Bool)
+        trace: CostUsageScanner.CodexPriorityTurnsResolution) -> (model: String?, mode: String?, included: Bool)
     {
-        let turn = evidence.turnID.flatMap { trace.priority.turns[$0] }
+        let turn = evidence.turnID.flatMap { trace.turns[$0] }
         let mismatchedThread = turn?.threadID.map { $0 != observation.threadID } ?? false
-        let validatedTrace = trace.priority.validationPending || mismatchedThread ? nil : turn
+        let validatedTrace = trace.validationPending || mismatchedThread ? nil : turn
         let selectedModel = validatedTrace?.model ?? model
         let billingModel = mismatchedThread || CostUsagePricing.isCodexUnattributedModel(selectedModel)
             ? nil : selectedModel
-        let startedDay = evidence.turnStartedAt.flatMap {
-            CostUsageScanner.dayKeyFromTimestamp($0, calendar: trace.range.calendar)
-        }
-        // A bounded query cannot establish absence for a turn that may have begun before it.
-        let coveredTurn = startedDay.map { $0 >= trace.range.sinceKey && $0 <= trace.range.untilKey } ?? false
-        let mode: String? = if trace.priority.validationPending || mismatchedThread || evidence.nativeTier == .unknown {
-            nil
-        } else if validatedTrace != nil || evidence.nativeTier == .priority {
-            "priority"
-        } else if evidence.turnID != nil, evidence.turnStartedAt == nil {
-            nil
-        } else if !trace.isPresent || coveredTurn {
-            "standard"
-        } else {
-            nil
-        }
+        let candidateMode = validatedTrace != nil || evidence.nativeTier == .priority ? "priority"
+            : evidence.nativeTier == .standard ? "standard" : nil
+        let mode = trace.validationPending || mismatchedThread || evidence.nativeTier == .unknown ? nil : candidateMode
         let included = CostUsageScanner.codexAutoReviewIsIncludedInPlan(
             model: model, timestampUnixMs: timestampUnixMs, hasCreatorAccount: evidence.hasCreatorAccount)
         return (billingModel, mode, included)

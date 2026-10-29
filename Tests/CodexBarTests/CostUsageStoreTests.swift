@@ -1063,7 +1063,11 @@ extension CostUsageStoreTests {
         let usageRow = CostUsageStoreUsageRow(path: file.path, rowIndex: 0, payload: Data([8, 9, 10]))
         let aggregate = Self.aggregate(day: "2026-08-01", model: "gpt-5.6-sol", scale: 1)
         let lineage = Self.lineage(path: file.path)
-        let line = Self.bufferedLine(path: file.path, kind: .subagent, index: 0)
+        var line = Self.bufferedLine(path: file.path, kind: .subagent, index: 0)
+        line
+            .payload = Data(
+                #"{"lineIndex":0,"ordinal":10,"endOffset":100,"line":{"threadSettingsApplied":{"priority":true}}}"#
+                    .utf8)
         let discovery = Self.discoveryState(paths: [file.path])
         let lookback = CostUsageStoreLookbackState(
             scanSinceDay: "2026-08-01",
@@ -1099,6 +1103,17 @@ extension CostUsageStoreTests {
             expected.metadata.previousReportPayload = nil
         }
         #expect(after == expected)
+        let legacy = try JSONDecoder().decode(
+            CostUsageScanner.CodexBufferedFastLine.self, from: #require(after.bufferedLines.first).payload)
+        #expect(legacy.line == .threadSettingsApplied(priority: .priority))
+        for tier in [CostUsageScanner.CodexNativePricingTier.standard, .priority, .unknown] {
+            let encoded = try JSONEncoder().encode(CostUsageScanner.CodexFastLine.threadSettingsApplied(priority: tier))
+            let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            let fields = try #require(object["threadSettingsApplied"] as? [String: Any])
+            #expect(fields["priority"] as? Bool == (tier == .priority))
+            let decoded = try JSONDecoder().decode(CostUsageScanner.CodexFastLine.self, from: encoded)
+            #expect(decoded == .threadSettingsApplied(priority: tier == .priority ? .priority : .standard))
+        }
         #expect(await current.rebuildCount == 0)
         #expect(await current.configuration()?.userVersion == Int(CostUsageStore.schemaVersion))
         let connection = try SQLiteTestConnection(url: fixture.databaseURL, readOnly: true)
