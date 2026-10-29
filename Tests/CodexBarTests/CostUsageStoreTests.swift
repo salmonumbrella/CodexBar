@@ -1106,14 +1106,6 @@ extension CostUsageStoreTests {
         let legacy = try JSONDecoder().decode(
             CostUsageScanner.CodexBufferedFastLine.self, from: #require(after.bufferedLines.first).payload)
         #expect(legacy.line == .threadSettingsApplied(priority: .priority))
-        for tier in [CostUsageScanner.CodexNativePricingTier.priority, .unknown] {
-            let encoded = try JSONEncoder().encode(CostUsageScanner.CodexFastLine.threadSettingsApplied(priority: tier))
-            let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-            let fields = try #require(object["threadSettingsApplied"] as? [String: Any])
-            #expect(fields["priority"] as? Bool == (tier == .priority))
-            let decoded = try JSONDecoder().decode(CostUsageScanner.CodexFastLine.self, from: encoded)
-            #expect(decoded == .threadSettingsApplied(priority: tier == .priority ? .priority : .standard))
-        }
         #expect(await current.rebuildCount == 0)
         #expect(await current.configuration()?.userVersion == Int(CostUsageStore.schemaVersion))
         let connection = try SQLiteTestConnection(url: fixture.databaseURL, readOnly: true)

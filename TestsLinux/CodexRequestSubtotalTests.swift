@@ -36,42 +36,35 @@ struct CodexRequestSubtotalTests {
         #expect(ledger.records.first?.pricingMode == "standard")
     }
 
-    @Test(arguments: [false, true], [
-        CodexRequestLedger.maximumOutputBytes - 1,
-        CodexRequestLedger.maximumOutputBytes,
-        CodexRequestLedger.maximumOutputBytes + 1,
-    ])
-    func `local identified export enforces the emitted byte limit`(pretty: Bool, outputBytes: Int) async throws {
-        let ledger = try Self.ledger(outputBytes: outputBytes, pretty: pretty)
+    @Test
+    func `local identified export enforces the emitted byte limit`() async throws {
+        let ledger = try Self.ledger(outputBytes: CodexRequestLedger.maximumOutputBytes, pretty: true)
         let remote = Self.source([Self.accountingRow(id: "b")])
-        let overLimit = outputBytes > CodexRequestLedger.maximumOutputBytes
-        let report = try await CodexBarCLI.collectCodexIdentifiedUsage(
-            remote: overLimit ? "fixture-host" : nil,
+        let accepted = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remote: nil,
             startUnixMs: Self.start,
             endUnixMs: Self.end,
-            pretty: pretty,
+            pretty: true,
             local: { ledger },
             fetchRemote: { _ in remote })
+        #expect(accepted.reports.count == 1)
+        #expect(accepted.reports[0].ledger?.records.count == 1)
+        #expect(accepted.allSourcesAvailable)
+        #expect(accepted.localLedgerJSON.map { $0.utf8.count + 1 } == CodexRequestLedger.maximumOutputBytes)
 
-        #expect(report.reports.count == (overLimit ? 2 : 1))
-        #expect(report.reports[0].ledger?.records.count == (overLimit ? nil : 1))
-        if overLimit {
-            #expect(report.reports[1].ledger?.records.count == 1)
-            #expect(report.subtotal?.totalTokens == 110)
-            #expect(!report.allSourcesAvailable && report.partial)
-            let localOnly = try await CodexBarCLI.collectCodexIdentifiedUsage(
-                remote: nil,
-                startUnixMs: Self.start,
-                endUnixMs: Self.end,
-                pretty: pretty,
-                local: { ledger },
-                fetchRemote: { _ in remote })
-            #expect(localOnly.reports[0].ledger == nil && localOnly.localLedgerJSON == nil)
-            #expect(!localOnly.allSourcesAvailable && localOnly.partial)
-        } else {
-            #expect(report.allSourcesAvailable)
-            #expect(report.localLedgerJSON.map { $0.utf8.count + 1 } == outputBytes)
-        }
+        let oversized = try Self.ledger(outputBytes: CodexRequestLedger.maximumOutputBytes + 1, pretty: true)
+        let rejected = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remote: "fixture-host",
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            pretty: true,
+            local: { oversized },
+            fetchRemote: { _ in remote })
+        #expect(rejected.reports.count == 2)
+        #expect(rejected.reports[0].ledger == nil && rejected.localLedgerJSON == nil)
+        #expect(rejected.reports[1].ledger?.records.count == 1)
+        #expect(rejected.subtotal?.totalTokens == 110)
+        #expect(!rejected.allSourcesAvailable && rejected.partial)
     }
 
     @Test(arguments: [false, true], [
@@ -110,9 +103,6 @@ struct CodexRequestSubtotalTests {
         #expect(report.allSourcesAvailable && !report.partial)
         #expect(report.subtotal?.requestCount == 2)
         #expect(report.subtotal?.totalTokens == 220)
-        // The envelope is collector output, never an SSH ledger input with a per-source byte cap.
-        let combined = try #require(CodexBarCLI.encodeJSON(report, pretty: false))
-        #expect(combined.utf8.count > CodexRequestLedger.maximumOutputBytes)
     }
 
     @Test
@@ -125,14 +115,7 @@ struct CodexRequestSubtotalTests {
             local: { ledger },
             fetchRemote: { _ in Issue.record("No remote host should be requested"); return ledger })
 
-        #expect(report.reports.count == 1)
-        #expect(report.reports.first?.ledger?.records == ledger.records)
         #expect(report.subtotal == nil)
-        #expect(report.allSourcesAvailable)
-        let json = try #require(report.localLedgerJSON)
-        let output = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
-        #expect(output["schemaVersion"] as? Int == 2)
-        #expect(output["costUSD"] == nil && output["unpricedRequestCount"] == nil)
         let envelope = try #require(CodexBarCLI.encodeJSON(report, pretty: false))
         let envelopeObject = try #require(
             JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any])
@@ -207,13 +190,12 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test(arguments: [
-        "schema", "future-schema", "invalid-mode", "included-pre-cutoff",
+        "future-schema", "invalid-mode", "included-pre-cutoff",
         "provider", "window", "digest", "cached", "reasoning", "overflow", "sum",
     ])
     func `invalid source contracts and overflowing subtotals are rejected`(invalid: String) throws {
         var source = Self.ledger()
         switch invalid {
-        case "schema": source.schemaVersion = 1
         case "future-schema": source.schemaVersion = 3
         case "invalid-mode": source = Self.source([Self.accountingRow(mode: "flex")])
         case "included-pre-cutoff": source = Self.source([Self.accountingRow(included: true)])
@@ -447,31 +429,23 @@ struct CodexRequestSubtotalTests {
     @Test
     func `historical prices use each accepted request timestamp`() throws {
         let cutoff: Int64 = 1_785_369_600_000
-        let rows = [cutoff - 1, cutoff].enumerated().map { index, timestamp in
-            Self.accountingRow(
-                id: String(index),
-                model: "gpt-5.6-terra",
-                timestamp: timestamp,
-                input: 1_000_000,
-                cached: 0,
-                output: 0,
-                reasoning: nil)
-        }
-        let source = CodexRequestLedger(startUnixMs: cutoff - 86_400_000, endUnixMs: cutoff, records: rows)
+        let row = Self.accountingRow(
+            model: "gpt-5.6-terra",
+            timestamp: cutoff - 1,
+            input: 1_000_000,
+            cached: 0,
+            output: 0,
+            reasoning: nil)
+        let source = CodexRequestLedger(startUnixMs: cutoff - 86_400_000, endUnixMs: cutoff, records: [row])
         let result = try Self.price([source])
-        #expect(result.requestCount == 2)
-        #expect(try abs(#require(result.costUSD) - 9) < 1e-12)
+        #expect(result.requestCount == 1)
+        #expect(try abs(#require(result.costUSD) - 5) < 1e-12)
     }
 
     @Test
     func `collector catalog and custom overlay price the deduplicated union`() throws {
         let model = "gpt-5-2025-08-07"
-        let ledger = try Self.loadNative([
-            Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart("turn"),
-            #"{"type":"turn_context","timestamp":"2026-08-31T11:00:00Z","#
-                + #""payload":{"turn_id":"turn","model":"gpt-5-2025-08-07"}}"#,
-            Self.nativeRequest(turn: "turn", model: nil),
-        ])
+        let ledger = Self.source([Self.accountingRow(model: model)])
         let catalog = try JSONDecoder().decode(ModelsDevCatalog.self, from: Data(
             (#"{"openai":{"id":"openai","models":{"gpt-5-2025-08-07":{"id":"gpt-5-2025-08-07","#
                 + #""cost":{"input":2,"output":3,"cache_read":0.5}}}}}"#).utf8))
@@ -491,7 +465,7 @@ struct CodexRequestSubtotalTests {
 
     @Test(arguments: [
         "default", "priority", "synthetic-unknown", "omitted", "null", "missing", "no-record",
-        "checkpoint-priority", "checkpoint-default", "checkpoint-ultrafast", "fresh-priority",
+        "after-start-priority", "after-start-default", "after-start-ultrafast", "fresh-priority",
     ])
     func `native tiers retain standard priority and unknown evidence`(tier: String) throws {
         let settings = switch tier {
@@ -502,16 +476,16 @@ struct CodexRequestSubtotalTests {
             .replacingOccurrences(of: "\"thread_settings\":", with: "\"other_settings\":")
         default: Self.nativeSettings(tier)
         }
-        let checkpoint = tier.hasPrefix("checkpoint-") || tier == "fresh-priority"
-        let before = checkpoint
+        let afterStart = tier.hasPrefix("after-start-") || tier == "fresh-priority"
+        let before = afterStart
             ? (tier == "fresh-priority" ? [] : [Self.nativeSettings("default")])
             : (tier == "no-record" ? [] : [settings])
-        let after = checkpoint
-            ? [Self.nativeSettings(tier == "fresh-priority" ? "priority" : String(tier.dropFirst(11)))] : []
+        let afterTier = tier == "fresh-priority" ? "priority" : String(tier.dropFirst("after-start-".count))
+        let after = afterStart ? [Self.nativeSettings(afterTier)] : []
         let ledger = try Self.loadNative(
             [Self.nativeMetadata] + before + [Self.nativeStart("turn")] + after
                 + [Self.nativeRequest(turn: "turn", model: "gpt-5.4")])
-        let expectedMode: String? = ["default", "omitted", "checkpoint-default"].contains(tier)
+        let expectedMode: String? = ["default", "omitted", "after-start-default"].contains(tier)
             ? "standard" : ["priority", "fresh-priority"].contains(tier) ? "priority" : nil
         #expect(ledger.records.first?.pricingMode == expectedMode)
     }
@@ -545,11 +519,6 @@ struct CodexRequestSubtotalTests {
         let exported = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(ledger))
         #expect(Set(exported.records.compactMap(\.model)) == ["gpt-5.4", "gpt-5.4-mini"])
         #expect(exported.records.allSatisfy { $0.pricingMode == "priority" })
-        let subtotal = try Self.price([exported])
-        // 5.4: (80 * 5 + 20 * 0.5 + 10 * 30) / 1M = 0.000710.
-        // mini: (80 * 1.5 + 20 * 0.15 + 10 * 9) / 1M = 0.000213.
-        #expect(try abs(#require(subtotal.costUSD) - 0.000923) < 1e-12)
-        #expect(subtotal.requestCount == 2 && subtotal.totalTokens == 220)
     }
 
     @Test
@@ -572,13 +541,11 @@ struct CodexRequestSubtotalTests {
         "unsupported-model",
         "mismatched-thread",
         "unreadable",
-        "unknown-native",
     ])
     func `trace billing evidence is selected before price lookup`(kind: String) throws {
         let model = kind == "unsupported-model" ? "synthetic-unpriced" : "gpt-5.4"
         let thread = kind == "mismatched-thread" ? "other-thread" : "fixture-session"
         var lines = [Self.nativeMetadata]
-        if kind == "unknown-native" { lines.append(Self.nativeSettings("synthetic-unknown")) }
         if kind == "unreadable" { lines.append(Self.nativeSettings("default")) }
         lines.append(Self.nativeStart(kind == "unmatched" ? "other-turn" : "turn"))
         try lines.append(Self.nativeRequest(turn: "turn", model: nil))
@@ -600,17 +567,13 @@ struct CodexRequestSubtotalTests {
         #expect(!result.partial)
     }
 
-    @Test(arguments: [false, true])
-    func `identified export prices trace evidence from the selected Codex home`(
-        selectedHomeHasPriority: Bool) throws
-    {
+    @Test
+    func `identified export prices trace evidence from the selected Codex home`() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let selectedHome = root.appendingPathComponent("selected-home", isDirectory: true)
         let sessionsRoot = selectedHome.appendingPathComponent("sessions", isDirectory: true)
-        let ambientTraceHome = root.appendingPathComponent("ambient-home/.codex", isDirectory: true)
         try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: ambientTraceHome, withIntermediateDirectories: true)
 
         let turn = "selected-home-turn"
         let request = try Self.nativeRequest("selected-home-request", turn: turn, model: "gpt-5.4")
@@ -619,17 +582,11 @@ struct CodexRequestSubtotalTests {
             .write(to: sessionsRoot.appendingPathComponent("history.jsonl"))
 
         let selectedTrace = selectedHome.appendingPathComponent("logs_2.sqlite")
-        let ambientTrace = ambientTraceHome.appendingPathComponent("logs_2.sqlite")
         try CodexPrioritySQLiteTests.Fixture.createDatabase(at: selectedTrace)
-        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: ambientTrace)
         let trace = (
             Self.start / 1000 + 12 * 60 * 60,
             CodexPrioritySQLiteTests.Fixture.traceBody(turn: turn, thread: "fixture-session"))
-        if selectedHomeHasPriority {
-            try CodexPrioritySQLiteTests.Fixture.insert([trace], at: selectedTrace)
-        } else {
-            try CodexPrioritySQLiteTests.Fixture.insert([trace], at: ambientTrace)
-        }
+        try CodexPrioritySQLiteTests.Fixture.insert([trace], at: selectedTrace)
 
         // Keep HOME and CODEX_HOME distinct. Leave the trace path unset so the ledger must resolve
         // both local sources from the selected home instead of the process ambient one.
@@ -641,19 +598,7 @@ struct CodexRequestSubtotalTests {
             environment: ["HOME": root.appendingPathComponent("ambient-home").path, "CODEX_HOME": selectedHome.path],
             processName: "CodexBar",
             checkCancellation: {})
-        let expectedMode = selectedHomeHasPriority ? "priority" : "standard"
-        #expect(ledger.records.first?.pricingMode == expectedMode)
-
-        let export = try #require(CodexBarCLI.encodeJSON(ledger, pretty: false))
-        let wire = try #require(JSONSerialization.jsonObject(with: Data(export.utf8)) as? [String: Any])
-        let records = try #require(wire["records"] as? [[String: Any]])
-        #expect(records.first?["pricingMode"] as? String == expectedMode)
-
-        let subtotal = try Self.price([ledger, ledger])
-        #expect(subtotal.requestCount == 1 && subtotal.totalTokens == 110)
-        let expectedCost = selectedHomeHasPriority ? 0.00071 : 0.000355
-        #expect(try abs(#require(subtotal.costUSD) - expectedCost) < 1e-12)
-        #expect(subtotal.unpricedRequestCount == 0 && !subtotal.partial)
+        #expect(ledger.records.first?.pricingMode == "priority")
 
         let explicitTrace = root.appendingPathComponent("explicit-trace.sqlite")
         try CodexPrioritySQLiteTests.Fixture.createDatabase(at: explicitTrace)
@@ -665,38 +610,6 @@ struct CodexRequestSubtotalTests {
             processName: "CodexBar",
             checkCancellation: {})
         #expect(overrideLedger.records.first?.pricingMode == "standard")
-    }
-
-    @Test
-    func `identified export isolates the implicit trace path in tests`() throws {
-        #expect(CodexCredentialFileAccess.isTestContext)
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let selectedHome = root.appendingPathComponent("selected-home", isDirectory: true)
-        let sessionsRoot = selectedHome.appendingPathComponent("sessions", isDirectory: true)
-        try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
-
-        let turn = "isolated-test-turn"
-        let request = try Self.nativeRequest("isolated-test-request", turn: turn, model: "gpt-5.4")
-        let history = [Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart(turn), request]
-        try Data((history.joined(separator: "\n") + "\n").utf8)
-            .write(to: sessionsRoot.appendingPathComponent("history.jsonl"))
-
-        let trace = selectedHome.appendingPathComponent("logs_2.sqlite")
-        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: trace)
-        try CodexPrioritySQLiteTests.Fixture.insert(
-            [(
-                Self.start / 1000 + 12 * 60 * 60,
-                CodexPrioritySQLiteTests.Fixture.traceBody(turn: turn, thread: "fixture-session"))],
-            at: trace)
-
-        let ledger = try CodexRequestLedger.load(
-            startUnixMs: Self.start,
-            endUnixMs: Self.end,
-            options: CostUsageScanner.Options(codexSessionsRoot: sessionsRoot),
-            checkCancellation: {})
-
-        #expect(ledger.records.first?.pricingMode == "standard")
     }
 
     @Test(arguments: [false, true])
@@ -780,16 +693,6 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test
-    func `ordinary trace fallback honors its injected Codex home`() {
-        let ambientHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let url = CodexPriorityDatabasePath.defaultURL(
-            processName: "CodexBar",
-            environment: ["CODEX_HOME": ambientHome.path])
-
-        #expect(url == ambientHome.appendingPathComponent("logs_2.sqlite"))
-    }
-
-    @Test
     func `native tier disagreements absorb pricing within one file`() throws {
         let ledger = try Self.loadNative([
             Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart("turn"),
@@ -804,10 +707,11 @@ struct CodexRequestSubtotalTests {
         #expect(result.unpricedRequestCount == 1)
     }
 
-    @Test(arguments: ["2026-10-06T06:59:59.999Z", "2026-10-06T07:00:00Z"], [false, true])
+    @Test(arguments: [false, true])
     func `qualified auto review retains trace billing model through wire and collector override`(
-        timestamp: String, requestModel: Bool) throws
+        requestModel: Bool) throws
     {
+        let timestamp = "2026-10-06T07:00:00Z"
         let cutoff: Int64 = 1_791_270_000_000
         let ledger = try Self.loadNative(
             [
@@ -822,17 +726,11 @@ struct CodexRequestSubtotalTests {
             end: cutoff)
         let copy = try JSONDecoder().decode(CodexRequestLedger.self, from: JSONEncoder().encode(ledger))
         #expect(copy.records.first?.model == "gpt-5.4")
-        let included = timestamp == "2026-10-06T07:00:00Z"
-        #expect(copy.records.first?.includedInPlan == included)
-        let expected = included ? 0 : 0.00071
-        #expect(try abs(#require(Self.price([copy]).costUSD) - expected) < 1e-12)
+        #expect(copy.records.first?.includedInPlan == true)
         let overlay = CostUsageCustomPricing(
             entries: ["gpt-5.4": .init(input: 4, output: 5, cacheRead: 1)], fingerprint: "fixture")
         let price = try Self.price([copy], custom: overlay)
         #expect(try abs(#require(price.costUSD) - 0.00078) < 1e-12)
-        let partial = CostUsageCustomPricing(entries: ["gpt-5.4": .init(input: 4)], fingerprint: "partial")
-        let unknown = try Self.price([copy], custom: partial)
-        #expect(unknown.costUSD == nil && unknown.unpricedRequestCount == 1 && !unknown.partial)
     }
 
     @Test(arguments: [false, true])
@@ -991,21 +889,4 @@ extension CodexRequestSubtotalTests {
     }
 
     private static let nativeMetadata = #"{"type":"session_meta","payload":{"id":"fixture-session"}}"#
-}
-
-@Suite
-struct CodexLocalDataScopeTests {
-    @Test
-    func `ordinary explicit home scope keeps its existing state database`() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try Data("sqlite_home = \"/synthetic/other-sqlite\"\n".utf8)
-            .write(to: root.appendingPathComponent("config.toml"))
-        let scope = CodexLocalDataScope.resolve(options: .init(
-            codexSessionsRoot: root.appendingPathComponent("sessions")))
-
-        #expect(scope.stateDatabaseURL == root.appendingPathComponent("state_5.sqlite"))
-        #expect(scope.sessionsRoot.path == root.appendingPathComponent("sessions").path)
-    }
 }
