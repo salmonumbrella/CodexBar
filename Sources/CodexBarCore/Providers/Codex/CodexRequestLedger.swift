@@ -10,8 +10,42 @@ public struct CodexRequestRecord: Codable, Sendable, Equatable {
     public let outputTokens: Int
     public let reasoningTokens: Int?
 
-    var usage: [Int?] {
-        [self.inputTokens, self.cacheReadTokens, self.outputTokens, self.reasoningTokens]
+    public let model: String?
+    public let pricingMode: String?
+    public let includedInPlan: Bool
+
+    init(
+        id: String, timestampUnixMs: Int64, inputTokens: Int, cacheReadTokens: Int,
+        outputTokens: Int, reasoningTokens: Int?, model: String? = nil,
+        pricingMode: String? = nil, includedInPlan: Bool = false)
+    {
+        self.id = id
+        self.timestampUnixMs = timestampUnixMs
+        self.inputTokens = inputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.outputTokens = outputTokens
+        self.reasoningTokens = reasoningTokens
+        self.model = model
+        self.pricingMode = pricingMode
+        self.includedInPlan = includedInPlan
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, timestampUnixMs, inputTokens, cacheReadTokens, outputTokens, reasoningTokens
+        case model, pricingMode, includedInPlan
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.id, forKey: .id)
+        try container.encode(self.timestampUnixMs, forKey: .timestampUnixMs)
+        try container.encode(self.inputTokens, forKey: .inputTokens)
+        try container.encode(self.cacheReadTokens, forKey: .cacheReadTokens)
+        try container.encode(self.outputTokens, forKey: .outputTokens)
+        try container.encode(self.reasoningTokens, forKey: .reasoningTokens)
+        try container.encode(self.model, forKey: .model)
+        try container.encode(self.pricingMode, forKey: .pricingMode)
+        try container.encode(self.includedInPlan, forKey: .includedInPlan)
     }
 }
 
@@ -19,7 +53,7 @@ public struct CodexRequestRecord: Codable, Sendable, Equatable {
 public struct CodexRequestLedger: Codable, Sendable {
     public static let maximumRecords = 50000
     public static let maximumOutputBytes = 32 * 1024 * 1024
-    public var schemaVersion = 1
+    public var schemaVersion = 2
     public var provider = "codex"
     public var startUnixMs: Int64
     public var endUnixMs: Int64
@@ -29,7 +63,7 @@ public struct CodexRequestLedger: Codable, Sendable {
     public var partial = false
 
     public func validate(startUnixMs: Int64, endUnixMs: Int64) throws {
-        guard self.schemaVersion == 1, self.provider == "codex",
+        guard self.schemaVersion == 2, self.provider == "codex",
               self.startUnixMs == startUnixMs, self.endUnixMs == endUnixMs,
               startUnixMs >= 0, endUnixMs <= 253_402_300_799_999, endUnixMs >= startUnixMs,
               startUnixMs % 86_400_000 == 0, endUnixMs - startUnixMs < 365 * 86_400_000,
@@ -42,6 +76,8 @@ public struct CodexRequestLedger: Codable, Sendable {
             guard Self.isDigest(record.id), (startUnixMs...endUnixMs).contains(record.timestampUnixMs),
                   record.inputTokens >= 0, (0...record.inputTokens).contains(record.cacheReadTokens),
                   record.outputTokens >= 0,
+                  record.pricingMode.map({ ["standard", "priority"].contains($0) }) ?? true,
+                  record.model.map({ !$0.isEmpty && CostUsagePricing.normalizeCodexModel($0) == $0 }) ?? true,
                   record.reasoningTokens.map({ (0...record.outputTokens).contains($0) }) ?? true,
                   !record.inputTokens.addingReportingOverflow(record.outputTokens).overflow
             else { throw RemoteCodexCostError.invalidReport }
@@ -77,6 +113,16 @@ public struct CodexRequestLedger: Codable, Sendable {
             since: Date(timeIntervalSince1970: Double(startUnixMs) / 1000),
             until: Date(timeIntervalSince1970: Double(endUnixMs) / 1000),
             calendar: calendar)
+        let traceRange = CostUsageScanner.CostUsageDayRange(
+            since: Date(timeIntervalSince1970: Double(startUnixMs) / 1000),
+            until: Date(timeIntervalSince1970: Double(endUnixMs) / 1000),
+            calendar: options.calendar)
+        let traceURL = CostUsageScanner.resolvedCodexPriorityDatabaseURL(options.codexTraceDatabaseURL)
+        let traceWasPresent = FileManager.default.fileExists(atPath: traceURL.path)
+        let priority = CostUsageScanner.resolveCodexPriorityTurns(
+            databaseURL: traceURL, sinceDayKey: traceRange.sinceKey, untilDayKey: traceRange.untilKey,
+            calendar: traceRange.calendar)
+        let traceIsPresent = traceWasPresent || FileManager.default.fileExists(atPath: traceURL.path)
         let roots = CostUsageScanner.codexSessionsRoots(options: options)
         var files: [URL] = []
         var foundRoot = false
@@ -121,7 +167,7 @@ public struct CodexRequestLedger: Codable, Sendable {
                 fileURL: file,
                 range: range,
                 inheritedTotalsResolver: resolver.inheritedTotals(for:atOrBefore:),
-                ownedRequestObserver: { observation, model in
+                ownedRequestObserver: { observation, model, evidence in
                     guard OpenCodexRouteDispatcher.countsTowardCodexSubscription(modelName: model) else { return }
                     guard let timestamp = CostUsageScanner.dateFromTimestamp(observation.timestamp) else {
                         ledger.partial = true
@@ -133,16 +179,20 @@ public struct CodexRequestLedger: Codable, Sendable {
                     let milliseconds = Int64(rawMilliseconds)
                     let id = Self.digest(["codex", observation.threadID, observation.responseID])
                     let usage = observation.usage
+                    let pricing = Self.pricingEvidence(
+                        observation: observation, timestampUnixMs: milliseconds, model: model, evidence: evidence,
+                        priority: priority, traceIsPresent: traceIsPresent, range: traceRange)
                     let row = CodexRequestRecord(
                         id: id,
                         timestampUnixMs: milliseconds,
                         inputTokens: usage.input,
                         cacheReadTokens: usage.cached,
                         outputTokens: usage.output,
-                        reasoningTokens: usage.reasoning.map { min(max(0, $0), max(0, usage.output)) })
-                    if let previous = records[id], previous.usage != row.usage { markConflict(id) }
+                        reasoningTokens: usage.reasoning.map { min(max(0, $0), max(0, usage.output)) },
+                        model: pricing.model, pricingMode: pricing.mode, includedInPlan: pricing.included)
+                    if let previous = records[id], previous != row { markConflict(id) }
                     if records.count < Self.maximumRecords || records[id] != nil {
-                        if records[id].map({ $0.timestampUnixMs > milliseconds }) ?? true { records[id] = row }
+                        if records[id] == nil { records[id] = row }
                     } else { exceededLimit = true }
                 },
                 rejectedRequestObserver: { observation in
@@ -178,6 +228,40 @@ public struct CodexRequestLedger: Codable, Sendable {
         return ledger
     }
 
+    /// Trace billing identity is evidence even when no rate exists for it.
+    private static func pricingEvidence(
+        observation: CostUsageScanner.CodexRequestUsageRecord,
+        timestampUnixMs: Int64,
+        model: String,
+        evidence: CostUsageScanner.CodexRequestPricingEvidence,
+        priority: CostUsageScanner.CodexPriorityTurnsResolution,
+        traceIsPresent: Bool,
+        range: CostUsageScanner.CostUsageDayRange) -> (model: String?, mode: String?, included: Bool)
+    {
+        let trace = evidence.turnID.flatMap { priority.turns[$0] }
+        let mismatchedThread = trace?.threadID.map { $0 != observation.threadID } ?? false
+        let validatedTrace = priority.validationPending || mismatchedThread ? nil : trace
+        let normalized = CostUsagePricing.normalizeCodexModel(validatedTrace?.model ?? model)
+        let billingModel = mismatchedThread || normalized == CostUsagePricing.codexUnattributedModel ? nil : normalized
+        let startedDay = evidence.turnStartedAt.flatMap {
+            CostUsageScanner.dayKeyFromTimestamp($0, calendar: range.calendar)
+        }
+        // A bounded query cannot establish absence for a turn that may have begun before it.
+        let coveredTurn = startedDay.map { $0 >= range.sinceKey && $0 <= range.untilKey } ?? false
+        let mode: String? = if priority.validationPending || mismatchedThread || evidence.nativeTier == .unknown {
+            nil
+        } else if validatedTrace != nil || evidence.nativeTier == .priority {
+            "priority"
+        } else if !traceIsPresent || coveredTurn {
+            "standard"
+        } else {
+            nil
+        }
+        let included = CostUsageScanner.codexAutoReviewIsIncludedInPlan(
+            model: model, timestampUnixMs: timestampUnixMs, hasCreatorAccount: evidence.hasCreatorAccount)
+        return (billingModel, mode, included)
+    }
+
     /// Both scan snapshots must bypass Foundation's per-URL resource-value cache.
     static func fileMetadata(_ file: URL) throws -> URLResourceValues {
         var refreshed = file
@@ -187,6 +271,16 @@ public struct CodexRequestLedger: Codable, Sendable {
 
     /// Conflicts remain excluded even when a later source supplies a clean observation of the identity.
     public static func merge(_ ledgers: [Self]) throws -> CodexRequestSubtotal {
+        try self.merge(
+            ledgers, catalog: CostUsagePricing.modelsDevCatalog() ?? ModelsDevCatalog(providers: [:]),
+            customPricing: CostUsagePricing.customPricingOverlay())
+    }
+
+    /// Deterministic injection seam; a complete union uses one collector snapshot and resolver.
+    static func merge(
+        _ ledgers: [Self], catalog: ModelsDevCatalog,
+        customPricing: CostUsageCustomPricing) throws -> CodexRequestSubtotal
+    {
         guard let first = ledgers.first else { throw RemoteCodexCostError.unavailable }
         var records: [String: CodexRequestRecord] = [:]
         var conflicts = Set<String>()
@@ -198,23 +292,62 @@ public struct CodexRequestLedger: Codable, Sendable {
             excluded = count.partialValue
             conflicts.formUnion(ledger.conflictingIDs)
             for row in ledger.records {
-                if let previous = records[row.id], previous.usage != row.usage { conflicts.insert(row.id) }
-                if records[row.id].map({ $0.timestampUnixMs > row.timestampUnixMs }) ?? true { records[row.id] = row }
+                if let previous = records[row.id], previous != row { conflicts.insert(row.id) }
+                if records[row.id] == nil { records[row.id] = row }
             }
         }
         var total = 0
-        let accepted = records.values.filter { !conflicts.contains($0.id) }
+        let accepted = records.values.filter { !conflicts.contains($0.id) }.sorted { $0.id < $1.id }
+        let resolver = CostUsagePricing.CodexResolver(catalog: catalog)
+        var cost = 0.0
+        var unpriced = 0
         for row in accepted {
             let sum = total.addingReportingOverflow(row.inputTokens + row.outputTokens)
             guard !sum.overflow else { throw RemoteCodexCostError.invalidReport }
             total = sum.partialValue
+            if let price = Self.price(row, catalog: catalog, customPricing: customPricing, resolver: resolver),
+               price.isFinite, price >= 0
+            {
+                cost += price
+                guard cost.isFinite else { throw RemoteCodexCostError.invalidReport }
+            } else {
+                unpriced += 1
+            }
         }
         return CodexRequestSubtotal(
             totalTokens: total,
             requestCount: accepted.count,
             conflictCount: conflicts.count,
             excludedCount: excluded,
-            partial: excluded > 0 || !conflicts.isEmpty || ledgers.contains(where: \.partial))
+            partial: excluded > 0 || !conflicts.isEmpty || ledgers.contains(where: \.partial),
+            costUSD: unpriced == 0 ? cost : nil,
+            unpricedRequestCount: unpriced)
+    }
+
+    private static func price(
+        _ row: CodexRequestRecord, catalog: ModelsDevCatalog,
+        customPricing: CostUsageCustomPricing, resolver: CostUsagePricing.CodexResolver) -> Double?
+    {
+        if row.includedInPlan,
+           customPricing.rates(
+               providerID: CostUsagePricing.codexModelsDevProviderID,
+               model: row.model ?? "codex-auto-review") == nil
+        {
+            return 0
+        }
+        guard let model = row.model, let mode = row.pricingMode else { return nil }
+        let date = Date(timeIntervalSince1970: Double(row.timestampUnixMs) / 1000)
+        if mode == "priority" {
+            // Unlike ordinary reports, an unsupported Priority rate must remain unknown.
+            return CostUsagePricing.codexPriorityCostUSD(
+                model: model, inputTokens: row.inputTokens, cachedInputTokens: row.cacheReadTokens,
+                outputTokens: row.outputTokens, pricingDate: date, modelsDevCatalog: catalog,
+                customPricing: customPricing, pricingResolver: resolver)
+        }
+        return CostUsagePricing.codexCostUSD(
+            model: model, inputTokens: row.inputTokens, cachedInputTokens: row.cacheReadTokens,
+            outputTokens: row.outputTokens, pricingDate: date, modelsDevCatalog: catalog,
+            customPricing: customPricing, pricingResolver: resolver)
     }
 
     private static func isDigest(_ value: String) -> Bool {
@@ -227,7 +360,7 @@ public struct CodexRequestLedger: Codable, Sendable {
     }
 }
 
-/// Numeric identified-request subtotal; pricing is deliberately unavailable in this first stage.
+/// API-equivalent estimate over the accepted identified requests, not complete account spend.
 public struct CodexRequestSubtotal: Codable, Sendable {
     public let kind = "identified-request-subtotal"
     public let totalTokens: Int
@@ -235,10 +368,14 @@ public struct CodexRequestSubtotal: Codable, Sendable {
     public let conflictCount: Int
     public let excludedCount: Int
     public let partial: Bool
-    public let costUSD: Double? = nil
+    public let costUSD: Double?
+    public let unpricedRequestCount: Int
 
     enum CodingKeys: String,
-    CodingKey { case kind, totalTokens, requestCount, conflictCount, excludedCount, partial, costUSD }
+        CodingKey
+    { case kind, totalTokens, requestCount, conflictCount, excludedCount, partial, costUSD,
+           unpricedRequestCount
+    }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -248,6 +385,7 @@ public struct CodexRequestSubtotal: Codable, Sendable {
         try container.encode(self.conflictCount, forKey: .conflictCount)
         try container.encode(self.excludedCount, forKey: .excludedCount)
         try container.encode(self.partial, forKey: .partial)
-        try container.encodeNil(forKey: .costUSD)
+        try container.encode(self.costUSD, forKey: .costUSD)
+        try container.encode(self.unpricedRequestCount, forKey: .unpricedRequestCount)
     }
 }

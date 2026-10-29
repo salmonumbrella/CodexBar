@@ -393,6 +393,18 @@ enum CostUsageScanner {
         }
     }
 
+    /// Only the opt-in request export consumes this evidence; it is never persisted.
+    enum CodexNativePricingTier: Equatable {
+        case absent, standard, priority, unknown
+    }
+
+    struct CodexRequestPricingEvidence {
+        var turnID: String?
+        var turnStartedAt: String?
+        var nativeTier: CodexNativePricingTier
+        var hasCreatorAccount: Bool
+    }
+
     struct CodexRequestLedgerState: Codable, Equatable {
         var responseIDs: Set<String> = []
         var mirroredResponses: [String: String]? = [:]
@@ -4093,7 +4105,7 @@ enum CostUsageScanner {
         maxBytesToRead: Int64? = nil,
         shouldStopReading: ((Int64) -> Bool)? = nil,
         inheritedTotalsResolver: ((String, String) throws -> CodexForkBaseline)? = nil,
-        ownedRequestObserver: ((CodexRequestUsageRecord, String) -> Void)? = nil,
+        ownedRequestObserver: ((CodexRequestUsageRecord, String, CodexRequestPricingEvidence) -> Void)? = nil,
         rejectedRequestObserver: ((CodexInvalidRequestUsage) -> Void)? = nil,
         scanIssueObserver: (() -> Void)? = nil,
         checkCancellation: CancellationCheck? = nil) throws -> CodexParseResult
@@ -4140,6 +4152,12 @@ enum CostUsageScanner {
         var tokenSnapshots: [CostUsageCodexTokenSnapshot] = []
         var lastAcceptedTokenTimestamp: String?
         var requestLedger = initialRequestLedgerState ?? CodexRequestLedgerState()
+        var nativeThreadTier: CodexNativePricingTier = startOffset == 0 ? .absent : .unknown
+        var nativeTiersByTurn: [String: CodexNativePricingTier] = [:]
+        var nativeTiersByOffset: [Int64: CodexNativePricingTier] = [:]
+        var turnStartsByOffset: [Int64: String] = [:]
+        var turnStarts: [String: String] = [:]
+        var startedTurns: Set<String> = []
         var replacedLegacyRowIndices: Set<Int> = []
         var ledgerLegacyPricingKeys: [Int: CodexSourcePricingKey] = [:]
         let retainedRows = Dictionary(initialRequestLedgerRows.compactMap { row in
@@ -4257,7 +4275,12 @@ enum CostUsageScanner {
                 ?? (turnID == currentTurnID || turnID == requestLedger.activeTurnID
                     ? Self.codexModelEvidence(currentModel) : nil)
                 ?? CostUsagePricing.codexUnattributedModel
-            ownedRequestObserver?(record, model)
+            ownedRequestObserver?(record, model, CodexRequestPricingEvidence(
+                turnID: turnID,
+                turnStartedAt: turnID.flatMap { startedTurns.contains($0) ? turnStarts[$0] : nil },
+                nativeTier: turnID.flatMap { nativeTiersByTurn[$0] }
+                    ?? (turnID == nil || nativeThreadTier == .unknown ? nativeThreadTier : .absent),
+                hasCreatorAccount: codexSession.hasCreatorAccount == true))
             // Identity, rather than cumulative counters, proves that a reset is a new request.
             // Copied parent records fail the ownership check above even if the parent is unavailable.
             let isReplay = requestLedger.responseIDs.contains(responseID)
@@ -4878,6 +4901,29 @@ enum CostUsageScanner {
             requestLedger.turnPerformance?[turnID] = performance
         }
 
+        func captureRequestPricingLine(_ line: CodexFastLine, bytes: Data, endOffset: Int64) {
+            guard ownedRequestObserver != nil else { return }
+            switch line {
+            case .threadSettingsApplied, .taskStarted: break
+            default: return
+            }
+            guard let object = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else { return }
+            switch line {
+            case .threadSettingsApplied:
+                let payload = object["payload"] as? [String: Any]
+                let settings = payload?["thread_settings"] as? [String: Any]
+                let tier = Self.codexModelEvidence(settings?["service_tier"] as? String)
+                nativeTiersByOffset[endOffset] = switch tier {
+                case "default": .standard
+                case "priority": .priority
+                default: .unknown
+                }
+            case .taskStarted:
+                turnStartsByOffset[endOffset] = object["timestamp"] as? String
+            default: break
+            }
+        }
+
         @discardableResult
         func processFastLine(
             _ fastLine: CodexFastLine,
@@ -4894,6 +4940,10 @@ enum CostUsageScanner {
                 if let title = Self.codexModelEvidence(metadata.title) { codexSession.title = title }
                 if let turnID = metadata.turnID {
                     requestLedger.activeTurnID = turnID
+                    if ownedRequestObserver != nil {
+                        if nativeTiersByTurn[turnID] == nil { nativeTiersByTurn[turnID] = nativeThreadTier }
+                        if turnStarts[turnID] == nil { turnStarts[turnID] = metadata.timestamp }
+                    }
                 }
                 if let model = metadata.model {
                     // An explicitly blank context clears stale model evidence; an omitted field preserves it.
@@ -4907,11 +4957,22 @@ enum CostUsageScanner {
                 break
             case let .threadSettingsApplied(priority):
                 requestLedger.threadPriority = priority
+                if ownedRequestObserver != nil {
+                    nativeThreadTier = sourceEndOffset.flatMap { nativeTiersByOffset[$0] }
+                        ?? (priority ? .priority : .unknown)
+                }
             case .mirrorBoundary:
                 requestLedger.clearPendingMirrors()
             case let .taskStarted(turnID):
                 requestLedger.clearPendingMirrors()
                 currentTurnID = turnID
+                if ownedRequestObserver != nil, let turnID {
+                    startedTurns.insert(turnID)
+                    nativeTiersByTurn[turnID] = nativeThreadTier
+                    if turnStarts[turnID] == nil {
+                        turnStarts[turnID] = sourceEndOffset.flatMap { turnStartsByOffset[$0] }
+                    }
+                }
                 if requestLedger.threadPriority == true {
                     if requestLedger.priorityTurnIDs == nil { requestLedger.priorityTurnIDs = [] }
                     requestLedger.priorityTurnIDs?.insert(turnID ?? "")
@@ -5136,6 +5197,7 @@ enum CostUsageScanner {
                             ? Self.codexFastLineTimestampValidity(line.bytes)
                             : true
                         if timestampValidity == true {
+                            captureRequestPricingLine(fastLine, bytes: line.bytes, endOffset: line.endOffset)
                             do {
                                 try routeFastLine(
                                     fastLine,
@@ -5163,6 +5225,7 @@ enum CostUsageScanner {
                             if object["type"] as? String == "token_usage_record" { scanIssueObserver?() }
                             return
                         }
+                        captureRequestPricingLine(parsedLine, bytes: line.bytes, endOffset: line.endOffset)
                         do {
                             try routeFastLine(
                                 parsedLine,

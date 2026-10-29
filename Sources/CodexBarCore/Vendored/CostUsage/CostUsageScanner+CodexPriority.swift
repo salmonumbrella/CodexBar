@@ -238,7 +238,8 @@ extension CostUsageScanner {
         databaseURL: URL? = nil,
         sinceDayKey: String? = nil,
         untilDayKey: String? = nil,
-        expectExistingDatabase: Bool = false) -> CodexPriorityTurnsResolution
+        expectExistingDatabase: Bool = false,
+        calendar: Calendar = .current) -> CodexPriorityTurnsResolution
     {
         let url = self.resolvedCodexPriorityDatabaseURL(databaseURL)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -246,11 +247,11 @@ extension CostUsageScanner {
             return CodexPriorityTurnsResolution(turns: [:], validationPending: expectExistingDatabase)
         }
 
-        if let untilDayKey, untilDayKey < CostUsageDayRange.dayKey(from: Date()) {
+        if let untilDayKey, untilDayKey < CostUsageDayRange.dayKey(from: Date(), calendar: calendar) {
             return self.boundedCodexPriorityTurns(
                 databaseURL: url,
                 sinceDayKey: sinceDayKey,
-                untilDayKey: untilDayKey)
+                untilDayKey: untilDayKey, calendar: calendar)
         }
 
         let observationID = self.nextCodexPriorityTurnsObservationID()
@@ -264,7 +265,7 @@ extension CostUsageScanner {
             observationID: observationID,
             url: url,
             sinceDayKey: sinceDayKey,
-            untilDayKey: untilDayKey)
+            untilDayKey: untilDayKey, calendar: calendar)
         guard let idleState = opened.idleState else { return resolution }
         // An immutable connection neither locks nor detects changes. A writer that appeared during
         // the read could have checkpointed pages into the main file, so the result is trusted only
@@ -281,7 +282,7 @@ extension CostUsageScanner {
         observationID: UInt64,
         url: URL,
         sinceDayKey: String?,
-        untilDayKey: String?) -> CodexPriorityTurnsResolution
+        untilDayKey: String?, calendar: Calendar) -> CodexPriorityTurnsResolution
     {
         let db = opened.db
         guard let maxRowID = self.maxCodexLogsRowID(db) else {
@@ -289,7 +290,7 @@ extension CostUsageScanner {
         }
 
         let requestedSinceEpoch: Int64 = if sinceDayKey != nil || untilDayKey != nil {
-            self.epochSeconds(forDayKey: sinceDayKey ?? "0000-01-01") ?? 0
+            self.epochSeconds(forDayKey: sinceDayKey ?? "0000-01-01", calendar: calendar) ?? 0
         } else {
             0
         }
@@ -358,7 +359,7 @@ extension CostUsageScanner {
                     turns: self.filteredResolvedCodexPriorityTurns(
                         failedReplacementFallback ?? resolved,
                         sinceDayKey: sinceDayKey,
-                        untilDayKey: untilDayKey),
+                        untilDayKey: untilDayKey, calendar: calendar),
                     validationPending: true)
             }
             updated.lastRowID = maxRowID
@@ -367,7 +368,7 @@ extension CostUsageScanner {
                     turns: self.filteredResolvedCodexPriorityTurns(
                         updated,
                         sinceDayKey: sinceDayKey,
-                        untilDayKey: untilDayKey),
+                        untilDayKey: untilDayKey, calendar: calendar),
                     validationPending: true)
             }
             self.storeCodexPriorityTurnsMemoIfNewer(updated, forPath: url.path)
@@ -379,7 +380,7 @@ extension CostUsageScanner {
                     turns: self.filteredResolvedCodexPriorityTurns(
                         resolved,
                         sinceDayKey: sinceDayKey,
-                        untilDayKey: untilDayKey),
+                        untilDayKey: untilDayKey, calendar: calendar),
                     validationPending: true)
             }
             self.storeCodexPriorityTurnsMemoIfNewer(updated, forPath: url.path)
@@ -392,14 +393,14 @@ extension CostUsageScanner {
             turns: self.filteredResolvedCodexPriorityTurns(
                 resolved,
                 sinceDayKey: sinceDayKey,
-                untilDayKey: untilDayKey),
+                untilDayKey: untilDayKey, calendar: calendar),
             validationPending: false)
     }
 
     private static func filteredResolvedCodexPriorityTurns(
         _ state: CodexPriorityTurnsMemoState,
         sinceDayKey: String?,
-        untilDayKey: String?) -> [String: CodexPriorityTurnMetadata]
+        untilDayKey: String?, calendar: Calendar) -> [String: CodexPriorityTurnMetadata]
     {
         var turns = state.turns
         for (turnID, completedModels) in state.priorityCompletedModelsByTurnID {
@@ -407,7 +408,7 @@ extension CostUsageScanner {
         }
         guard sinceDayKey != nil || untilDayKey != nil else { return turns }
         return turns.filter { _, turn in
-            self.timestamp(turn.timestamp, isInRangeSince: sinceDayKey, until: untilDayKey)
+            self.timestamp(turn.timestamp, isInRangeSince: sinceDayKey, until: untilDayKey, calendar: calendar)
         }
     }
 
@@ -420,7 +421,7 @@ extension CostUsageScanner {
     private static func boundedCodexPriorityTurns(
         databaseURL: URL,
         sinceDayKey: String?,
-        untilDayKey: String?) -> CodexPriorityTurnsResolution
+        untilDayKey: String?, calendar: Calendar) -> CodexPriorityTurnsResolution
     {
         guard let opened = self.openCodexPriorityDatabase(at: databaseURL) else {
             return CodexPriorityTurnsResolution(turns: [:], validationPending: true)
@@ -441,8 +442,10 @@ extension CostUsageScanner {
             return CodexPriorityTurnsResolution(turns: [:], validationPending: true)
         }
         defer { sqlite3_finalize(stmt) }
-        let start = self.epochSeconds(forDayKey: sinceDayKey ?? "0000-01-01") ?? 0
-        let end = self.epochSeconds(forDayKey: self.nextDayKey(after: untilDayKey ?? "9999-12-30"))
+        let start = self.epochSeconds(forDayKey: sinceDayKey ?? "0000-01-01", calendar: calendar) ?? 0
+        let end = self.epochSeconds(
+            forDayKey: self.nextDayKey(after: untilDayKey ?? "9999-12-30", calendar: calendar),
+            calendar: calendar)
             ?? Int64.max
         guard sqlite3_bind_int64(stmt, 1, start) == SQLITE_OK,
               sqlite3_bind_int64(stmt, 2, end) == SQLITE_OK
@@ -454,7 +457,7 @@ extension CostUsageScanner {
         while stepResult == SQLITE_ROW {
             defer { stepResult = sqlite3_step(stmt) }
             let timestamp = self.timestamp(stmt: stmt, index: 0)
-            guard self.timestamp(timestamp, isInRangeSince: sinceDayKey, until: untilDayKey),
+            guard self.timestamp(timestamp, isInRangeSince: sinceDayKey, until: untilDayKey, calendar: calendar),
                   let body = self.text(stmt: stmt, index: 1)
             else { continue }
             if let completed = self.parseCodexCompletedTraceRow(body: body) {
@@ -1103,9 +1106,14 @@ extension CostUsageScanner {
         return self.text(stmt: stmt, index: index)
     }
 
-    private static func timestamp(_ timestamp: String?, isInRangeSince since: String?, until: String?) -> Bool {
+    private static func timestamp(
+        _ timestamp: String?,
+        isInRangeSince since: String?,
+        until: String?,
+        calendar: Calendar) -> Bool
+    {
         guard since != nil || until != nil else { return true }
-        guard let dayKey = self.dayKey(fromTimestamp: timestamp) else { return false }
+        guard let dayKey = self.dayKey(fromTimestamp: timestamp, calendar: calendar) else { return false }
         if let since, dayKey < since {
             return false
         }
@@ -1115,26 +1123,26 @@ extension CostUsageScanner {
         return true
     }
 
-    private static func dayKey(fromTimestamp timestamp: String?) -> String? {
+    private static func dayKey(fromTimestamp timestamp: String?, calendar: Calendar) -> String? {
         guard let timestamp else { return nil }
         if let seconds = Int64(timestamp) {
             return CostUsageScanner.CostUsageDayRange.dayKey(
-                from: Date(timeIntervalSince1970: TimeInterval(seconds)))
+                from: Date(timeIntervalSince1970: TimeInterval(seconds)), calendar: calendar)
         }
         let dayKey = timestamp.prefix(10)
         return dayKey.count == 10 ? String(dayKey) : nil
     }
 
-    private static func nextDayKey(after dayKey: String) -> String {
-        guard let date = self.localStartOfDay(dayKey, calendar: .current),
-              let next = CostUsageScanner.CostUsageDayRange.localGregorianCalendar()
+    private static func nextDayKey(after dayKey: String, calendar: Calendar) -> String {
+        guard let date = self.localStartOfDay(dayKey, calendar: calendar),
+              let next = CostUsageScanner.CostUsageDayRange.localGregorianCalendar(matching: calendar)
                   .date(byAdding: .day, value: 1, to: date)
         else { return dayKey }
-        return CostUsageScanner.CostUsageDayRange.dayKey(from: next)
+        return CostUsageScanner.CostUsageDayRange.dayKey(from: next, calendar: calendar)
     }
 
-    private static func epochSeconds(forDayKey dayKey: String) -> Int64? {
-        guard let date = self.localStartOfDay(dayKey, calendar: .current) else { return nil }
+    private static func epochSeconds(forDayKey dayKey: String, calendar: Calendar) -> Int64? {
+        guard let date = self.localStartOfDay(dayKey, calendar: calendar) else { return nil }
         return Int64(date.timeIntervalSince1970)
     }
 }

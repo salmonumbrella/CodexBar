@@ -114,8 +114,17 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
     Legacy token-count events and unidentified usage are excluded; this subtotal is not complete account usage.
   - Identical copies count once. Contradictory copies of an identity are excluded throughout that merge,
     including after a later matching copy. Identities are length-framed SHA-256 hashes; exported rows contain
-    timestamps and token categories, without conversation text, model names, paths or raw session IDs.
-  - Combined prices are explicitly unavailable (`costUSD: null`). This stage does not estimate dollars.
+    timestamps, token categories, normalized billing model, pricing mode (`standard` / `priority` / null),
+    and an `includedInPlan` Boolean, without conversation text, account identifiers, paths or raw session IDs.
+    Schema 2 requires matching timestamps, tokens, model, mode and inclusion evidence; a disagreement stays
+    excluded even after a later clean copy. Schema 1 sources are unavailable until their CLI is updated.
+  - Combined `costUSD` is an API-equivalent estimate, calculated after deduplication using one collector
+    catalog/custom-rate snapshot and each request's timestamp and token threshold. Source-computed dollars
+    are never added. Unknown prices produce explicit `costUSD: null` and an `unpricedRequestCount`;
+    an empty accepted set is $0. Price incompleteness alone does not set the coverage flag `partial`.
+    Qualified Auto-review usage is included at $0 unless the collector supplies custom rates. Unknown native
+    tiers, unvalidated trace evidence and unsupported Priority rates stay unpriced. Missing optional trace
+    databases permit Standard defaults; a missing bounded trace match cannot establish an older turn's tier.
     Collection uses the existing one-shot SSH safeguards, with no persistent ledger. Exports are limited to
     50,000 records and conflict IDs and 32 MiB; exceeding a limit rejects the source rather than truncating usage.
     An unavailable source retains successful source data, marks the result partial, and exits nonzero.
