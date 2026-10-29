@@ -7,13 +7,13 @@ enum CodexPriorityDatabasePath {
     static func defaultURL(
         processName: String = ProcessInfo.processInfo.processName,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        codexHome: () -> URL = { CodexHomeScope.ambientHomeURL(env: [:]) }) -> URL
+        codexHome: (() -> URL)? = nil) -> URL
     {
         // Session-root fixtures do not select a trace database; isolate the fallback before consulting user paths.
         let directory = if CodexCredentialFileAccess.isTestContext(processName: processName, environment: environment) {
             self.testDirectory
         } else {
-            codexHome()
+            codexHome?() ?? CodexHomeScope.ambientHomeURL(env: environment)
         }
         return self.databaseURL(forCodexHome: directory)
     }

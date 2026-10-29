@@ -537,6 +537,7 @@ struct CodexRequestSubtotalTests {
             endUnixMs: Self.end,
             options: options,
             environment: ["HOME": root.appendingPathComponent("ambient-home").path, "CODEX_HOME": selectedHome.path],
+            processName: "CodexBar",
             checkCancellation: {})
         let expectedMode = selectedHomeHasPriority ? "priority" : "standard"
         #expect(ledger.records.first?.pricingMode == expectedMode)
@@ -559,8 +560,121 @@ struct CodexRequestSubtotalTests {
             endUnixMs: Self.end,
             options: CostUsageScanner.Options(codexTraceDatabaseURL: explicitTrace),
             environment: ["HOME": root.appendingPathComponent("ambient-home").path, "CODEX_HOME": selectedHome.path],
+            processName: "CodexBar",
             checkCancellation: {})
         #expect(overrideLedger.records.first?.pricingMode == "standard")
+    }
+
+    @Test
+    func `identified export isolates the implicit trace path in tests`() throws {
+        #expect(CodexCredentialFileAccess.isTestContext)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let selectedHome = root.appendingPathComponent("selected-home", isDirectory: true)
+        let sessionsRoot = selectedHome.appendingPathComponent("sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
+
+        let turn = "isolated-test-turn"
+        let request = try Self.nativeRequest("isolated-test-request", turn: turn, model: "gpt-5.4")
+        let history = [Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart(turn), request]
+        try Data((history.joined(separator: "\n") + "\n").utf8)
+            .write(to: sessionsRoot.appendingPathComponent("history.jsonl"))
+
+        let trace = selectedHome.appendingPathComponent("logs_2.sqlite")
+        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: trace)
+        try CodexPrioritySQLiteTests.Fixture.insert(
+            [(
+                Self.start / 1000 + 12 * 60 * 60,
+                CodexPrioritySQLiteTests.Fixture.traceBody(turn: turn, thread: "fixture-session"))],
+            at: trace)
+
+        let ledger = try CodexRequestLedger.load(
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            options: CostUsageScanner.Options(codexSessionsRoot: sessionsRoot),
+            checkCancellation: {})
+
+        #expect(ledger.records.first?.pricingMode == "standard")
+    }
+
+    @Test
+    func `identified export separates CODEX_HOME sessions from CODEX_SQLITE_HOME traces`() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let selectedHome = root.appendingPathComponent("selected-home", isDirectory: true)
+        let sessionsRoot = selectedHome.appendingPathComponent("sessions", isDirectory: true)
+        let sqliteHome = root.appendingPathComponent("sqlite-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sqliteHome, withIntermediateDirectories: true)
+
+        let turn = "separate-sqlite-home-turn"
+        let request = try Self.nativeRequest("separate-sqlite-home-request", turn: turn, model: "gpt-5.4")
+        let history = [Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart(turn), request]
+        try Data((history.joined(separator: "\n") + "\n").utf8)
+            .write(to: sessionsRoot.appendingPathComponent("history.jsonl"))
+        let trace = sqliteHome.appendingPathComponent("logs_2.sqlite")
+        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: trace)
+        try CodexPrioritySQLiteTests.Fixture.insert(
+            [(
+                Self.start / 1000 + 12 * 60 * 60,
+                CodexPrioritySQLiteTests.Fixture.traceBody(turn: turn, thread: "fixture-session"))],
+            at: trace)
+
+        let ledger = try CodexRequestLedger.load(
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            options: CostUsageScanner.Options(),
+            environment: ["CODEX_HOME": selectedHome.path, "CODEX_SQLITE_HOME": sqliteHome.path],
+            processName: "CodexBar",
+            checkCancellation: {})
+
+        #expect(ledger.records.first?.pricingMode == "priority")
+        #expect(try abs(#require(Self.price([ledger]).costUSD) - 0.00071) < 1e-12)
+    }
+
+    @Test
+    func `identified export ignores a Priority trace in the ambient home when sessions are selected`() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let selectedHome = root.appendingPathComponent("selected-home", isDirectory: true)
+        let sessionsRoot = selectedHome.appendingPathComponent("sessions", isDirectory: true)
+        let ambientHome = root.appendingPathComponent("ambient-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: ambientHome, withIntermediateDirectories: true)
+
+        let turn = "ambient-control-turn"
+        let request = try Self.nativeRequest("ambient-control-request", turn: turn, model: "gpt-5.4")
+        let history = [Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart(turn), request]
+        try Data((history.joined(separator: "\n") + "\n").utf8)
+            .write(to: sessionsRoot.appendingPathComponent("history.jsonl"))
+        let ambientTrace = ambientHome.appendingPathComponent("logs_2.sqlite")
+        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: ambientTrace)
+        try CodexPrioritySQLiteTests.Fixture.insert(
+            [(
+                Self.start / 1000 + 12 * 60 * 60,
+                CodexPrioritySQLiteTests.Fixture.traceBody(turn: turn, thread: "fixture-session"))],
+            at: ambientTrace)
+
+        let ledger = try CodexRequestLedger.load(
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            options: CostUsageScanner.Options(codexSessionsRoot: sessionsRoot),
+            environment: ["CODEX_HOME": ambientHome.path],
+            processName: "CodexBar",
+            checkCancellation: {})
+
+        #expect(ledger.records.first?.pricingMode == "standard")
+        #expect(try abs(#require(Self.price([ledger]).costUSD) - 0.000355) < 1e-12)
+    }
+
+    @Test
+    func `ordinary trace fallback honors its injected Codex home`() {
+        let ambientHome = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let url = CodexPriorityDatabasePath.defaultURL(
+            processName: "CodexBar",
+            environment: ["CODEX_HOME": ambientHome.path])
+
+        #expect(url == ambientHome.appendingPathComponent("logs_2.sqlite"))
     }
 
     @Test

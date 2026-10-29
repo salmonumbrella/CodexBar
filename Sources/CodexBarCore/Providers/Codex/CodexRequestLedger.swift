@@ -113,6 +113,7 @@ public struct CodexRequestLedger: Codable, Sendable {
         endUnixMs: Int64,
         options: CostUsageScanner.Options,
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        processName: String = ProcessInfo.processInfo.processName,
         checkCancellation: @escaping CostUsageScanner.CancellationCheck) throws -> Self
     {
         var ledger = Self(startUnixMs: startUnixMs, endUnixMs: endUnixMs)
@@ -138,7 +139,10 @@ public struct CodexRequestLedger: Codable, Sendable {
         if !hasCustomSessionsRoot {
             scopedOptions.codexSessionsRoot = scope.sessionsRoot
             scopedOptions.codexTraceDatabaseURL = options.codexTraceDatabaseURL
-                ?? CodexPriorityDatabasePath.databaseURL(forCodexHome: scope.codexHome)
+                ?? CodexPriorityDatabasePath.defaultURL(
+                    processName: processName,
+                    environment: environment,
+                    codexHome: { scope.sqliteHome })
         }
         let priority = CostUsageScanner.resolveCodexPriorityTurns(databaseURL: scopedOptions.codexTraceDatabaseURL)
         let roots = CostUsageScanner.codexSessionsRoots(options: scopedOptions)
