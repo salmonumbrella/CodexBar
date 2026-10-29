@@ -498,6 +498,71 @@ struct CodexRequestSubtotalTests {
         #expect(!result.partial)
     }
 
+    @Test(arguments: [false, true])
+    func `identified export prices trace evidence from the selected Codex home`(
+        selectedHomeHasPriority: Bool) throws
+    {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let selectedHome = root.appendingPathComponent("selected-home", isDirectory: true)
+        let sessionsRoot = selectedHome.appendingPathComponent("sessions", isDirectory: true)
+        let ambientTraceHome = root.appendingPathComponent("ambient-home/.codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: ambientTraceHome, withIntermediateDirectories: true)
+
+        let turn = "selected-home-turn"
+        let request = try Self.nativeRequest("selected-home-request", turn: turn, model: "gpt-5.4")
+        let history = [Self.nativeMetadata, Self.nativeSettings("default"), Self.nativeStart(turn), request]
+        try Data((history.joined(separator: "\n") + "\n").utf8)
+            .write(to: sessionsRoot.appendingPathComponent("history.jsonl"))
+
+        let selectedTrace = selectedHome.appendingPathComponent("logs_2.sqlite")
+        let ambientTrace = ambientTraceHome.appendingPathComponent("logs_2.sqlite")
+        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: selectedTrace)
+        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: ambientTrace)
+        let trace = (
+            Self.start / 1000 + 12 * 60 * 60,
+            CodexPrioritySQLiteTests.Fixture.traceBody(turn: turn, thread: "fixture-session"))
+        if selectedHomeHasPriority {
+            try CodexPrioritySQLiteTests.Fixture.insert([trace], at: selectedTrace)
+        } else {
+            try CodexPrioritySQLiteTests.Fixture.insert([trace], at: ambientTrace)
+        }
+
+        // Keep HOME and CODEX_HOME distinct. Leave the trace path unset so the ledger must resolve
+        // both local sources from the selected home instead of the process ambient one.
+        let options = CostUsageScanner.Options()
+        let ledger = try CodexRequestLedger.load(
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            options: options,
+            environment: ["HOME": root.appendingPathComponent("ambient-home").path, "CODEX_HOME": selectedHome.path],
+            checkCancellation: {})
+        let expectedMode = selectedHomeHasPriority ? "priority" : "standard"
+        #expect(ledger.records.first?.pricingMode == expectedMode)
+
+        let export = try #require(CodexBarCLI.encodeJSON(ledger, pretty: false))
+        let wire = try #require(JSONSerialization.jsonObject(with: Data(export.utf8)) as? [String: Any])
+        let records = try #require(wire["records"] as? [[String: Any]])
+        #expect(records.first?["pricingMode"] as? String == expectedMode)
+
+        let subtotal = try Self.price([ledger, ledger])
+        #expect(subtotal.requestCount == 1 && subtotal.totalTokens == 110)
+        let expectedCost = selectedHomeHasPriority ? 0.00071 : 0.000355
+        #expect(try abs(#require(subtotal.costUSD) - expectedCost) < 1e-12)
+        #expect(subtotal.unpricedRequestCount == 0 && !subtotal.partial)
+
+        let explicitTrace = root.appendingPathComponent("explicit-trace.sqlite")
+        try CodexPrioritySQLiteTests.Fixture.createDatabase(at: explicitTrace)
+        let overrideLedger = try CodexRequestLedger.load(
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            options: CostUsageScanner.Options(codexTraceDatabaseURL: explicitTrace),
+            environment: ["HOME": root.appendingPathComponent("ambient-home").path, "CODEX_HOME": selectedHome.path],
+            checkCancellation: {})
+        #expect(overrideLedger.records.first?.pricingMode == "standard")
+    }
+
     @Test
     func `native tier disagreements absorb pricing within one file`() throws {
         let ledger = try Self.loadNative([

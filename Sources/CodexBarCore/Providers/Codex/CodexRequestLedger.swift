@@ -112,6 +112,7 @@ public struct CodexRequestLedger: Codable, Sendable {
         startUnixMs: Int64,
         endUnixMs: Int64,
         options: CostUsageScanner.Options,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
         checkCancellation: @escaping CostUsageScanner.CancellationCheck) throws -> Self
     {
         var ledger = Self(startUnixMs: startUnixMs, endUnixMs: endUnixMs)
@@ -123,8 +124,24 @@ public struct CodexRequestLedger: Codable, Sendable {
             since: Date(timeIntervalSince1970: Double(startUnixMs) / 1000),
             until: Date(timeIntervalSince1970: Double(endUnixMs) / 1000),
             calendar: calendar)
-        let priority = CostUsageScanner.resolveCodexPriorityTurns(databaseURL: options.codexTraceDatabaseURL)
-        let roots = CostUsageScanner.codexSessionsRoots(options: options)
+        let scope = CodexLocalDataScope.resolve(options: options, environment: environment)
+        let hasCustomSessionsRoot = if let sessionsRoot = options.codexSessionsRoot?
+            .standardizedFileURL,
+            sessionsRoot.lastPathComponent != "sessions"
+        {
+            // A custom session root does not identify a Codex home or its state database.
+            true
+        } else {
+            false
+        }
+        var scopedOptions = options
+        if !hasCustomSessionsRoot {
+            scopedOptions.codexSessionsRoot = scope.sessionsRoot
+            scopedOptions.codexTraceDatabaseURL = options.codexTraceDatabaseURL
+                ?? CodexPriorityDatabasePath.databaseURL(forCodexHome: scope.codexHome)
+        }
+        let priority = CostUsageScanner.resolveCodexPriorityTurns(databaseURL: scopedOptions.codexTraceDatabaseURL)
+        let roots = CostUsageScanner.codexSessionsRoots(options: scopedOptions)
         var files: [URL] = []
         var foundRoot = false
         for root in roots {

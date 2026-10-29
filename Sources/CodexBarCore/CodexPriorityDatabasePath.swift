@@ -15,6 +15,10 @@ enum CodexPriorityDatabasePath {
         } else {
             codexHome()
         }
-        return directory.appendingPathComponent("logs_2.sqlite", isDirectory: false)
+        return self.databaseURL(forCodexHome: directory)
+    }
+
+    static func databaseURL(forCodexHome codexHome: URL) -> URL {
+        codexHome.appendingPathComponent("logs_2.sqlite", isDirectory: false)
     }
 }

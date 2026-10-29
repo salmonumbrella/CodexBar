@@ -9,7 +9,10 @@ struct CodexLocalDataScope: Sendable, Equatable {
     let archivedSessionsRoot: URL
     let stateDatabaseURL: URL
 
-    static func resolve(options: CostUsageScanner.Options) -> CodexLocalDataScope {
+    static func resolve(
+        options: CostUsageScanner.Options,
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> CodexLocalDataScope
+    {
         if let sessionsRoot = options.codexSessionsRoot?.standardizedFileURL,
            sessionsRoot.lastPathComponent == "sessions"
         {
@@ -17,7 +20,6 @@ struct CodexLocalDataScope: Sendable, Equatable {
             return self.make(home: home)
         }
 
-        let environment = ProcessInfo.processInfo.environment
         if let sqliteHome = Self.nonEmpty(environment["CODEX_SQLITE_HOME"]) {
             let home = URL(fileURLWithPath: sqliteHome, isDirectory: true).standardizedFileURL
             return self.make(home: home)
