@@ -3,12 +3,72 @@ import Testing
 @testable import CodexBarCLI
 @testable import CodexBarCore
 
+@Suite(.serialized)
 struct CodexRequestSubtotalTests {
     private static let start: Int64 = 1_788_134_400_000
     private static let end: Int64 = 1_788_177_600_000
 
-    private static func ledger(input: Int = 100) -> CodexRequestLedger {
-        self.source([self.accountingRow(input: input)])
+    private static func ledger(input: Int = 100, model: String? = "gpt-5") -> CodexRequestLedger {
+        self.source([self.accountingRow(model: model, input: input)])
+    }
+
+    @Test(arguments: [false, true], [
+        CodexRequestLedger.maximumOutputBytes - 1,
+        CodexRequestLedger.maximumOutputBytes,
+        CodexRequestLedger.maximumOutputBytes + 1,
+    ])
+    func `local identified export enforces the emitted byte limit`(pretty: Bool, outputBytes: Int) async throws {
+        let ledger = try Self.ledger(outputBytes: outputBytes, pretty: pretty)
+        let remote = Self.source([Self.accountingRow(id: "b")])
+        let overLimit = outputBytes > CodexRequestLedger.maximumOutputBytes
+        let report = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remote: overLimit ? "fixture-host" : nil,
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            pretty: pretty,
+            local: { ledger },
+            fetchRemote: { _ in remote })
+
+        #expect(report.reports.count == (overLimit ? 2 : 1))
+        #expect(report.reports[0].ledger?.records.count == (overLimit ? nil : 1))
+        if overLimit {
+            #expect(report.reports[1].ledger?.records.count == 1)
+            #expect(report.subtotal?.totalTokens == 110)
+            #expect(!report.allSourcesAvailable && report.partial)
+        } else {
+            #expect(report.allSourcesAvailable)
+        }
+    }
+
+    @Test(arguments: [false, true], [
+        CodexRequestLedger.maximumOutputBytes - 1,
+        CodexRequestLedger.maximumOutputBytes,
+        CodexRequestLedger.maximumOutputBytes + 1,
+    ])
+    func `identified ledger encoding bounds selected formatting and its newline`(
+        pretty: Bool, outputBytes: Int) throws
+    {
+        let ledger = try Self.ledger(outputBytes: outputBytes, pretty: pretty)
+        let json = CodexBarCLI.encodeJSON(ledger, pretty: pretty)
+        let emittedBytes = json.map { $0.utf8.count + 1 } ?? 0
+
+        #expect(emittedBytes == (outputBytes <= CodexRequestLedger.maximumOutputBytes ? outputBytes : 0))
+    }
+
+    @Test
+    func `local-only identified collection keeps the ledger without pricing a subtotal`() async throws {
+        let ledger = Self.ledger()
+        let report = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remote: nil,
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            local: { ledger },
+            fetchRemote: { _ in Issue.record("No remote host should be requested"); return ledger })
+
+        #expect(report.reports.count == 1)
+        #expect(report.reports.first?.ledger?.records == ledger.records)
+        #expect(report.subtotal == nil)
+        #expect(report.allSourcesAvailable)
     }
 
     @Test(arguments: [1, 2])
@@ -515,6 +575,23 @@ struct CodexRequestSubtotalTests {
 }
 
 extension CodexRequestSubtotalTests {
+    private static func ledger(outputBytes: Int, pretty: Bool = false) throws -> CodexRequestLedger {
+        let emptyModel = self.source([self.accountingRow(model: nil, mode: nil)])
+        let oneByteModel = self.source([self.accountingRow(model: "x", mode: nil)])
+        let emptyWire = try #require(CodexBarCLI.encodeJSON(emptyModel, pretty: pretty))
+        let oneByteWire = try #require(CodexBarCLI.encodeJSON(oneByteModel, pretty: pretty))
+        let outputBytesWithoutModel = emptyWire.utf8.count + 1
+        let oneByteDelta = oneByteWire.utf8.count - emptyWire.utf8.count
+        let modelLength = outputBytes - outputBytesWithoutModel - oneByteDelta + 1
+        let ledger = self.source([self.accountingRow(
+            model: String(repeating: "x", count: modelLength), mode: nil)])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = pretty ? [.prettyPrinted, .sortedKeys] : []
+        #expect(try encoder.encode(ledger).count + 1 == outputBytes)
+        return ledger
+    }
+
     private static func accountingRow(
         id: String = "a",
         model: String? = "gpt-5",

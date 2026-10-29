@@ -58,6 +58,7 @@ extension CodexBarCLI {
                 remote: host,
                 startUnixMs: start,
                 endUnixMs: end,
+                pretty: output.pretty,
                 local: { try await CodexRequestLedger.load(startUnixMs: start, endUnixMs: end) },
                 fetchRemote: {
                     try await RemoteCodexCostFetcher().fetchIdentifiedUsage(
@@ -89,18 +90,27 @@ extension CodexBarCLI {
         remote: String?,
         startUnixMs: Int64,
         endUnixMs: Int64,
+        pretty: Bool = false,
         local: @Sendable () async throws -> CodexRequestLedger,
         fetchRemote: @Sendable (String) async throws -> CodexRequestLedger) async throws -> CodexIdentifiedResult
     {
         var reports: [CodexIdentifiedSource] = []
         var subtotal: CodexRequestSubtotal?
-        for host in ["local"] + (remote.map { [$0] } ?? []) {
+        let hosts = ["local"] + (remote.map { [$0] } ?? [])
+        for (sourceIndex, host) in hosts.enumerated() {
             try Task.checkCancellation()
             do {
-                let ledger = try await (reports.isEmpty ? local() : fetchRemote(host))
+                let ledger = try await (sourceIndex == 0 ? local() : fetchRemote(host))
                 try ledger.validate(startUnixMs: startUnixMs, endUnixMs: endUnixMs)
-                // Reject an overflowing source or union while the earlier sources remain available.
-                subtotal = try CodexRequestLedger.merge(reports.compactMap(\.ledger) + [ledger])
+                // The local producer uses the selected format; SSH always requests compact JSON.
+                let sourceIsPretty = sourceIndex == 0 && pretty
+                guard Self.encodeJSON(ledger, pretty: sourceIsPretty) != nil else {
+                    throw RemoteCodexCostError.invalidReport
+                }
+                if remote != nil {
+                    // Reject an overflowing union while the earlier sources remain available.
+                    subtotal = try CodexRequestLedger.merge(reports.compactMap(\.ledger) + [ledger])
+                }
                 reports.append(.init(host: host, ledger: ledger, error: nil))
             } catch is CancellationError {
                 throw CancellationError()
@@ -122,6 +132,6 @@ extension CodexBarCLI {
             reports: reports,
             subtotal: subtotal,
             allSourcesAvailable: available,
-            partial: !available || subtotal?.partial != false)
+            partial: !available || (subtotal?.partial ?? false))
     }
 }

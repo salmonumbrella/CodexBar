@@ -332,7 +332,7 @@ public struct CodexRequestLedger: Codable, Sendable {
             let sum = total.addingReportingOverflow(row.inputTokens + row.outputTokens)
             guard !sum.overflow else { throw RemoteCodexCostError.invalidReport }
             total = sum.partialValue
-            if let price = Self.price(row, catalog: catalog, customPricing: customPricing, resolver: resolver),
+            if let price = Self.price(row, customPricing: customPricing, resolver: resolver),
                price.isFinite, price >= 0
             {
                 cost += price
@@ -353,7 +353,6 @@ public struct CodexRequestLedger: Codable, Sendable {
 
     private static func price(
         _ row: CodexRequestRecord,
-        catalog: ModelsDevCatalog,
         customPricing: CostUsageCustomPricing,
         resolver: CostUsagePricing.CodexResolver) -> Double?
     {
@@ -374,7 +373,6 @@ public struct CodexRequestLedger: Codable, Sendable {
                 cachedInputTokens: row.cacheReadTokens,
                 outputTokens: row.outputTokens,
                 pricingDate: date,
-                modelsDevCatalog: catalog,
                 customPricing: customPricing,
                 pricingResolver: resolver)
         }
@@ -384,7 +382,6 @@ public struct CodexRequestLedger: Codable, Sendable {
             cachedInputTokens: row.cacheReadTokens,
             outputTokens: row.outputTokens,
             pricingDate: date,
-            modelsDevCatalog: catalog,
             customPricing: customPricing,
             pricingResolver: resolver)
     }
