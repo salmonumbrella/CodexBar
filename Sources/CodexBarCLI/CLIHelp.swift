@@ -150,8 +150,9 @@ extension CodexBarCLI {
           --summary-only emits versioned Codex JSON totals without account or session details.
           --identified-only requires --provider codex and JSON. It exports strong native request identities
           over one UTC window (30 days by default); legacy and unidentified usage are excluded. Prices are unavailable.
-          Add --remote to deduplicate that export with one SSH host using the same millisecond window.
-          Both hosts need a CLI supporting --identified-only. Failures retain an explicitly partial local subtotal.
+          Repeat --remote to deduplicate exports from several SSH hosts using the same millisecond window.
+          Each host needs --identified-only support. Failed hosts retain successful sources and exit nonzero.
+          Source rows include local/ssh origin and collector completion time; failed rows omit that time.
           These modes accept --days 1...365, not --period, --summary-only, grouping or breakdown.
 
         Examples:
@@ -162,7 +163,7 @@ extension CodexBarCLI {
           codexbar cost --provider antigravity --format json
           codexbar cost --provider muse --format json
           codexbar cost --provider codex --remote build-host --format json
-          codexbar cost --provider codex --identified-only --format json --remote build-host
+          codexbar cost --provider codex --identified-only --format json --remote build-a --remote build-b
         """
     }
 

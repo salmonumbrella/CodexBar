@@ -106,9 +106,11 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
   - Host reports always scan native Codex history only. `--days` and `--refresh` apply on both hosts; each host retains its own calendar and pricing. Both modes reject `--group-by` and `--breakdown`; `--remote` and `--summary-only` cannot be combined. Ordinary `cost` output remains compatible.
   - Remote capture is bounded to 16 KiB per stream during execution, with a 60-second client process timeout. Unsupported versions, invalid totals, overflow, and unexpected output fail closed. Remote failure retains a successful local row and exits nonzero; JSON remains one document. Ctrl-C and termination signals cancel collection and await local SSH subprocess cleanup. The remote scanner follows its SSH server's disconnect behavior and may finish after the client exits.
 - `codexbar cost --provider codex --identified-only --format json --days 30` exports an experimental,
-  versioned native request ledger. Add `--remote build-host` to return source reports and an
-  **identified-request subtotal** from this machine and one SSH host. Both hosts need a CLI supporting
-  this option. `--identified-end <Unix milliseconds>` pins the inclusive end; the start is UTC midnight
+  versioned native request ledger. Repeat `--remote` to return source reports and one deduplicated
+  **identified-request subtotal** from this machine and every requested SSH host, for example:
+  `codexbar cost --provider codex --identified-only --format json --remote build-a --remote build-b`.
+  Each host needs a CLI supporting this option. `--identified-end <Unix milliseconds>` pins the inclusive end;
+  the start is UTC midnight
   `days - 1` days earlier. Saved periods and time zones do not change this window.
   - Only owned native `token_usage_record` events with session/thread and response IDs contribute.
     Legacy token-count events and unidentified usage are excluded; this subtotal is not complete account usage.
@@ -118,7 +120,15 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
   - Combined prices are explicitly unavailable (`costUSD: null`). This stage does not estimate dollars.
     Collection uses the existing one-shot SSH safeguards, with no persistent ledger. Exports are limited to
     50,000 records and conflict IDs and 32 MiB; exceeding a limit rejects the source rather than truncating usage.
-    An unavailable source retains successful source data, marks the result partial, and exits nonzero.
+    Sources are collected locally first, then sequentially in argument order, including repeated aliases.
+    Each report has a `host`, a `source` origin (`local` or `ssh`), and either a ledger or a sanitized error.
+    Successful reports have `collectedAt`, the collector's ISO 8601 scan/fetch completion time; failed
+    reports omit it. It is not the source snapshot time or the time of its last request. An SSH alias
+    named `local` still has `source: "ssh"`.
+    An unavailable, invalid or overflowing source retains successful source data, marks the result partial,
+    and exits nonzero. Collection continues with later hosts. When every source fails, `subtotal` is omitted.
+    Available sources with exclusions or conflicts can be partial without a failure exit.
+    Without `--remote`, successful output remains a bare ledger. Ordinary summaries accept only one host.
     Readable empty history is available; damaged or disappearing files mark the available data partial.
     Files are read and validated even for a short window; reducing `--days` does not skip older files.
   - Requires explicit `--provider codex` and JSON. Do not combine with `--summary-only`,

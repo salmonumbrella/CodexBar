@@ -188,33 +188,12 @@ public struct CodexRequestLedger: Codable, Sendable {
     /// Conflicts remain excluded even when a later source supplies a clean observation of the identity.
     public static func merge(_ ledgers: [Self]) throws -> CodexRequestSubtotal {
         guard let first = ledgers.first else { throw RemoteCodexCostError.unavailable }
-        var records: [String: CodexRequestRecord] = [:]
-        var conflicts = Set<String>()
-        var excluded = 0
+        var union = CodexRequestUnion(startUnixMs: first.startUnixMs, endUnixMs: first.endUnixMs)
         for ledger in ledgers {
-            try ledger.validate(startUnixMs: first.startUnixMs, endUnixMs: first.endUnixMs)
-            let count = excluded.addingReportingOverflow(ledger.excludedCount)
-            guard !count.overflow else { throw RemoteCodexCostError.invalidReport }
-            excluded = count.partialValue
-            conflicts.formUnion(ledger.conflictingIDs)
-            for row in ledger.records {
-                if let previous = records[row.id], previous.usage != row.usage { conflicts.insert(row.id) }
-                if records[row.id].map({ $0.timestampUnixMs > row.timestampUnixMs }) ?? true { records[row.id] = row }
-            }
+            try union.insert(ledger)
         }
-        var total = 0
-        let accepted = records.values.filter { !conflicts.contains($0.id) }
-        for row in accepted {
-            let sum = total.addingReportingOverflow(row.inputTokens + row.outputTokens)
-            guard !sum.overflow else { throw RemoteCodexCostError.invalidReport }
-            total = sum.partialValue
-        }
-        return CodexRequestSubtotal(
-            totalTokens: total,
-            requestCount: accepted.count,
-            conflictCount: conflicts.count,
-            excludedCount: excluded,
-            partial: excluded > 0 || !conflicts.isEmpty || ledgers.contains(where: \.partial))
+        // Check only the final union: later conflicts can remove otherwise overflowing records.
+        return try union.subtotal()
     }
 
     private static func isDigest(_ value: String) -> Bool {
@@ -224,6 +203,52 @@ public struct CodexRequestLedger: Codable, Sendable {
     private static func digest(_ components: [String]) -> String {
         let framed = components.map { "\($0.utf8.count):\($0)" }.joined()
         return SHA256.hash(data: Data(framed.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// Shared value state lets collectors reject a source without changing the accepted union.
+package struct CodexRequestUnion {
+    let startUnixMs: Int64
+    let endUnixMs: Int64
+    private var records: [String: CodexRequestRecord] = [:]
+    private var conflicts = Set<String>()
+    private var excluded = 0
+    private var partial = false
+
+    package init(startUnixMs: Int64, endUnixMs: Int64) {
+        self.startUnixMs = startUnixMs
+        self.endUnixMs = endUnixMs
+    }
+
+    package mutating func insert(_ ledger: CodexRequestLedger) throws {
+        try ledger.validate(startUnixMs: self.startUnixMs, endUnixMs: self.endUnixMs)
+        let count = self.excluded.addingReportingOverflow(ledger.excludedCount)
+        guard !count.overflow else { throw RemoteCodexCostError.invalidReport }
+        self.excluded = count.partialValue
+        self.partial = self.partial || ledger.partial
+        self.conflicts.formUnion(ledger.conflictingIDs)
+        for row in ledger.records {
+            if let previous = self.records[row.id], previous.usage != row.usage { self.conflicts.insert(row.id) }
+            if self.records[row.id].map({ $0.timestampUnixMs > row.timestampUnixMs }) ?? true {
+                self.records[row.id] = row
+            }
+        }
+    }
+
+    package func subtotal() throws -> CodexRequestSubtotal {
+        var total = 0
+        let accepted = self.records.values.filter { !self.conflicts.contains($0.id) }
+        for row in accepted {
+            let sum = total.addingReportingOverflow(row.inputTokens + row.outputTokens)
+            guard !sum.overflow else { throw RemoteCodexCostError.invalidReport }
+            total = sum.partialValue
+        }
+        return CodexRequestSubtotal(
+            totalTokens: total,
+            requestCount: accepted.count,
+            conflictCount: self.conflicts.count,
+            excludedCount: self.excluded,
+            partial: self.excluded > 0 || !self.conflicts.isEmpty || self.partial)
     }
 }
 

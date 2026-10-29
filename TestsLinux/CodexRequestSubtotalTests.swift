@@ -1,3 +1,4 @@
+import Commander
 import Foundation
 import Testing
 @testable import CodexBarCLI
@@ -7,14 +8,164 @@ struct CodexRequestSubtotalTests {
     private static let start: Int64 = 1_788_134_400_000
     private static let end: Int64 = 1_788_177_600_000
 
-    private static func ledger(input: Int = 100) -> CodexRequestLedger {
-        CodexRequestLedger(startUnixMs: self.start, endUnixMs: self.end, records: [.init(
-            id: String(repeating: "a", count: 64),
-            timestampUnixMs: self.end,
-            inputTokens: input,
-            cacheReadTokens: 20,
-            outputTokens: 10,
-            reasoningTokens: 3)])
+    private static func ledger(input: Int = 100, id: String = "a", output: Int = 10) -> CodexRequestLedger {
+        CodexRequestLedger(
+            startUnixMs: self.start,
+            endUnixMs: self.end,
+            records: [.init(
+                id: String(repeating: id, count: 64),
+                timestampUnixMs: self.end,
+                inputTokens: input,
+                cacheReadTokens: 20,
+                outputTokens: output,
+                reasoningTokens: min(3, output))])
+    }
+
+    @Test
+    func `SSH alias local retains explicit remote provenance`() async throws {
+        let ledger = Self.ledger()
+        let report = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remotes: ["local"],
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            local: { ledger },
+            fetchRemote: { _ in ledger })
+        let wire = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        let rows = try #require(wire["reports"] as? [[String: Any]])
+        #expect(rows.map { $0["source"] as? String } == ["local", "ssh"])
+        #expect(rows.allSatisfy { $0["collectedAt"] != nil })
+    }
+
+    @Test(arguments: [
+        [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+    ])
+    func `all source permutations preserve copied and quarantined identities`(order: [Int]) async throws {
+        let original = Self.ledger()
+        var conflict = Self.ledger(input: 101)
+        conflict.records += Self.ledger(id: "b").records
+        let sources = [original, conflict, original]
+        let result = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remotes: ["0", "1", "2"],
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            local: { CodexRequestLedger(
+                startUnixMs: Self.start,
+                endUnixMs: Self.end) },
+            fetchRemote: { sources[order[Int($0)!]] })
+        #expect(result.allSourcesAvailable)
+        #expect(result.partial)
+        #expect(result.subtotal?.totalTokens == 110)
+        #expect(result.subtotal?.requestCount == 1)
+        #expect(result.subtotal?.conflictCount == 1)
+        let strict = try CodexRequestLedger.merge(order.map { sources[$0] })
+        #expect(strict.totalTokens == result.subtotal?.totalTokens)
+        #expect(strict.conflictCount == result.subtotal?.conflictCount)
+    }
+
+    @Test(arguments: ["unavailable", "schema", "window", "overflow"])
+    func `a rejected middle source rolls back its union and later hosts still contribute`(failure: String)
+        async throws
+    {
+        let local = Self.ledger()
+        let other = Self.ledger(id: "c")
+        var rejected = Self.ledger(input: Int.max - 100, id: "b", output: 0)
+        rejected.conflictingIDs = local.records.map(\.id)
+        rejected.excludedCount = 5
+        rejected.partial = true
+        if failure == "schema" { rejected.schemaVersion = 2 }
+        if failure == "window" { rejected.endUnixMs += 1 }
+        let invalid = rejected
+        let stamp = Date(timeIntervalSince1970: 1234)
+        let result = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remotes: ["first", "bad", "last", "last"],
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            now: { stamp },
+            local: { local },
+            fetchRemote: { host in
+                if host == "bad" {
+                    if failure == "unavailable" { throw CocoaError(.fileReadNoPermission) }
+                    return invalid
+                }
+                return host == "first" ? other : local
+            })
+        #expect(result.reports.map(\.host) == ["local", "first", "bad", "last", "last"])
+        #expect(result.reports.map(\.source) == ["local", "ssh", "ssh", "ssh", "ssh"])
+        #expect(result.reports.map(\.collectedAt) == [stamp, stamp, nil, stamp, stamp])
+        #expect(result.reports[2].error != nil)
+        #expect(result.reports[2].ledger == nil)
+        #expect(result.subtotal?.totalTokens == 220)
+        #expect(result.subtotal?.conflictCount == 0)
+        #expect(result.subtotal?.excludedCount == 0)
+        #expect(result.subtotal?.partial == false)
+        #expect(!result.allSourcesAvailable && result.partial)
+    }
+
+    @Test(arguments: ["remote", "none", "empty", "partial"])
+    func `availability is separate from an empty or partial accepted subtotal`(state: String) async throws {
+        var ledger = Self.ledger()
+        if state == "empty" { ledger.records = [] }
+        ledger.partial = state == "partial"
+        let source = ledger
+        let result = try await CodexBarCLI.collectCodexIdentifiedUsage(
+            remotes: ["host"],
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            local: {
+                if state == "remote" || state == "none" { throw RemoteCodexCostError.unavailable }
+                return source
+            },
+            fetchRemote: { _ in
+                if state == "none" { throw RemoteCodexCostError.unavailable }
+                return source
+            })
+        #expect(result.allSourcesAvailable == (state == "empty" || state == "partial"))
+        #expect(result.partial == (state != "empty"))
+        #expect(result.subtotal?.totalTokens == (state == "none" ? nil : (state == "empty" ? 0 : 110)))
+        if state == "none" {
+            let wire = try #require(
+                JSONSerialization.jsonObject(with: JSONEncoder().encode(result)) as? [String: Any])
+            #expect(wire["subtotal"] == nil)
+            #expect(result.reports.allSatisfy { $0.collectedAt == nil && $0.error != nil })
+        }
+    }
+
+    @Test
+    func `strict merge allows a later conflict to remove intermediate overflow`() throws {
+        let local = Self.ledger()
+        let huge = Self.ledger(input: Int.max - 100, id: "b", output: 0)
+        var conflict = huge
+        conflict.conflictingIDs = huge.records.map(\.id)
+        let subtotal = try CodexRequestLedger.merge([local, huge, conflict])
+        #expect(subtotal.totalTokens == 110)
+        #expect(subtotal.conflictCount == 1)
+    }
+
+    @Test
+    func `cancellation after a source returns prevents the next SSH fetch`() async {
+        let task = Task {
+            try await CodexBarCLI.collectCodexIdentifiedUsage(
+                remotes: ["first", "never"],
+                startUnixMs: Self.start,
+                endUnixMs: Self.end,
+                local: { Self.ledger() },
+                fetchRemote: { host in
+                    #expect(host == "first")
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    return Self.ledger()
+                })
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test
+    func `real cost parser preserves every repeated remote in argument order`() throws {
+        let parsed = try Program(descriptors: CodexBarCLI.commandDescriptors()).resolve(argv: [
+            "cost", "--provider", "codex", "--identified-only", "--format", "json",
+            "--remote", "one", "--remote", "local", "--remote", "one",
+        ]).parsedValues
+        #expect(parsed.options["remote"] == ["one", "local", "one"])
+        #expect(parsed.flags.contains("identifiedOnly"))
     }
 
     @Test(arguments: [1, 2])
@@ -29,7 +180,7 @@ struct CodexRequestSubtotalTests {
             outputTokens: 0,
             reasoningTokens: nil) }
         let report = try await CodexBarCLI.collectCodexIdentifiedUsage(
-            remote: "fixture-host",
+            remotes: ["fixture-host"],
             startUnixMs: Self.start,
             endUnixMs: Self.end,
             local: { local },
@@ -265,7 +416,7 @@ struct CodexRequestSubtotalTests {
             environment: ["UNRELATED_TOKEN": "fixture-secret"])
         #expect(received.records == ledger.records)
         let combined = try await CodexBarCLI.collectCodexIdentifiedUsage(
-            remote: "fixture-host",
+            remotes: ["fixture-host"],
             startUnixMs: Self.start,
             endUnixMs: Self.end,
             local: { ledger },
@@ -273,7 +424,7 @@ struct CodexRequestSubtotalTests {
         #expect(combined.allSourcesAvailable)
         #expect(combined.subtotal?.totalTokens == 110)
         let report = try await CodexBarCLI.collectCodexIdentifiedUsage(
-            remote: "fixture-host",
+            remotes: ["fixture-host"],
             startUnixMs: Self.start,
             endUnixMs: Self.end,
             local: { ledger },
@@ -285,7 +436,7 @@ struct CodexRequestSubtotalTests {
         #expect(report.reports[1].ledger == nil)
         let cancelled = Task {
             try await CodexBarCLI.collectCodexIdentifiedUsage(
-                remote: "fixture-host",
+                remotes: ["fixture-host"],
                 startUnixMs: Self.start,
                 endUnixMs: Self.end,
                 local: { throw CancellationError() },
