@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 import Testing
 @testable import CodexBar
 @testable import CodexBarCore
@@ -79,17 +78,9 @@ extension CodexMachineMenuTests {
                     now: Date(timeIntervalSince1970: 1_728_000_100),
                     force: false)
             },
-            machineLoader: { _, _, _, _ in try await calls.load(fixture) },
+            machineLoader: { _, _, _, _ in await calls.load(fixture) },
             nowProvider: { Date(timeIntervalSince1970: 1_728_000_100) })
         defer { controller.stop() }
-        let settings = testSettingsStore(suiteName: #function, userDefaults: InMemoryUserDefaults())
-        let store = UsageStore(
-            fetcher: UsageFetcher(), browserDetection: BrowserDetection(cacheTTL: 0), settings: settings)
-        store.sharedSpendDashboardControllerStorage = controller
-        let completed = LockIsolated(false)
-        withObservationTracking {
-            _ = store.menuObservationToken
-        } onChange: { completed.setValue(true) }
         controller.update(configuration: configuration)
         for _ in 0..<5 {
             controller.revealMachineSpend()
@@ -97,54 +88,33 @@ extension CodexMachineMenuTests {
         }
         #expect(controller.machineExpanded && controller.machineRevealRevision == 5)
         #expect(await calls.loadCount == 0)
-        #expect(!completed.value)
         controller.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
         while controller.machineRunning {
             await Task.yield()
         }
         #expect(await calls.loadCount == 1)
-        #expect(completed.value)
-        let retained = controller.machineCostMenuLines()
-        #expect(retained.last?.contains("00:00 UTC") == true)
-        controller.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
-        while controller.machineRunning {
-            await Task.yield()
-        }
-        #expect(await calls.loadCount == 2)
-        #expect(controller.machineCostMenuLines() == retained)
-        let cleared = LockIsolated(false)
-        withObservationTracking {
-            _ = store.menuObservationToken
-        } onChange: { cleared.setValue(true) }
+        #expect(controller.machineCostMenuLines().last?.contains("00:00 UTC") == true)
         controller.update(configuration: .init(
             costUsageEnabled: scopeChange,
             providerIDs: scopeChange ? ["codex"] : [],
             codexAccountIdentities: scopeChange ? ["ambient|changed"] : []))
         #expect(controller.machineCostMenuLines().isEmpty)
-        #expect(cleared.value)
         controller.cancelMachineSpend()
         #expect(controller.machineResult == nil)
         controller.runMachineSpend(hosts: [], eligible: false, localPartial: false)
-        #expect(await calls.loadCount == 2)
+        #expect(await calls.loadCount == 1)
     }
 }
 
 private actor MachineMenuCollectionRecorder {
     var loadCount = 0
-    func load(_ result: CodexIdentifiedResult) throws -> CodexIdentifiedResult {
+    func load(_ result: CodexIdentifiedResult) -> CodexIdentifiedResult {
         self.loadCount += 1
-        if self.loadCount > 1 { throw CancellationError() }
         return result
     }
 }
 
 extension CodexMachineMenuTests {
-    @Test(arguments: [UsageProvider.codex, .claude, .pi], [false, true])
-    func `machine action follows only the enabled Codex Cost surface`(provider: UsageProvider, enabled: Bool) {
-        #expect(StatusItemController.showsMachineCostMenu(provider: provider, costSubmenuEnabled: enabled)
-            == (provider == .codex && enabled))
-    }
-
     @Test
     func `ordinary Cost lines place machine summary after local Today and before local history`() {
         let usage = UsageMenuCardView.Model.TokenUsageSection(

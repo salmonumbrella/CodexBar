@@ -132,11 +132,8 @@ struct SpendDashboardPane: View {
     var body: some View {
         ScrollViewReader { reader in
             self.dashboardScrollView
-                .onChange(of: self.controller.machineExpanded, initial: true) { _, expanded in
-                    if expanded { reader.scrollTo("machineSpend", anchor: .top) }
-                }
-                .onChange(of: self.controller.machineRevealRevision) { _, _ in
-                    reader.scrollTo("machineSpend", anchor: .top)
+                .onChange(of: self.controller.machineRevealRevision, initial: true) { _, _ in
+                    if self.controller.machineExpanded { reader.scrollTo("machineSpend", anchor: .top) }
                 }
         }
     }

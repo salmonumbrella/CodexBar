@@ -53,8 +53,7 @@ struct MachineSpendDetail: View {
             }
             .padding(.top, 8)
         }
-        .onAppear { if self.controller.machineExpanded { self.run() } }
-        .onChange(of: self.controller.machineExpanded) { _, open in
+        .onChange(of: self.controller.machineExpanded, initial: true) { _, open in
             if open {
                 self.run()
             } else {

@@ -1255,8 +1255,6 @@ final class SpendDashboardController {
     func update(configuration: SpendDashboardConfiguration, force: Bool = false) {
         self.refreshRetainedCodexDisplayNames(configuration.codexAccountDisplayNames)
         if let previous = self.configuration,
-           previous.costUsageEnabled != configuration.costUsageEnabled ||
-           previous.providerIDs.contains("codex") != configuration.providerIDs.contains("codex") ||
            previous.codexAccountIdentities != configuration.codexAccountIdentities
         {
             self.cancelMachineSpend()
@@ -1987,11 +1985,8 @@ extension SpendDashboardController {
         let tokens = L("%@ tokens", UsageFormatter.tokenCountString(subtotal.totalTokens))
         let amount = subtotal.costUSD.map { UsageFormatter.currencyString($0, currencyCode: "USD") }
         let usage = amount.map { "\($0) · \(tokens)" } ?? "\(tokens) · \(L("Price unknown"))"
-        let format = DateFormatter()
-        format.locale = Locale(identifier: "en_US_POSIX")
-        format.timeZone = .gmt
-        format.dateFormat = "HH:mm"
-        let time = format.string(from: Date(timeIntervalSince1970: Double(captured.endUnixMs) / 1000))
+        let minutes = captured.endUnixMs % 86_400_000 / 60000
+        let time = String(format: "%02d:%02d", minutes / 60, minutes % 60)
         let available = result.reports.filter { $0.ledger != nil }.count
         var coverage = L("As of %@ UTC · %d/%d sources", time, available, result.reports.count)
         if result.partial || subtotal.partial || localPartial { coverage += " · \(L("Partial coverage"))" }
@@ -2026,9 +2021,7 @@ extension SpendDashboardController {
         self.machineTask = Task { [weak self] in
             let result = try? await loader(hosts, days, start, end)
             guard !Task.isCancelled, let self else { return }
-            if let result, self.machineResult == nil || result.reports.contains(where: { $0.ledger != nil }) {
-                self.machineResult = result
-            }
+            self.machineResult = result
             self.machineRunning = false
             self.machineTask = nil
         }

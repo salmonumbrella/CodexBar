@@ -40,9 +40,6 @@ extension UsageStore {
         _ = self.historicalPaceRevision
         _ = self.planUtilizationHistoryRevision
         _ = self.providerStorageFootprints
-        let machine = self.sharedSpendDashboardController()
-        _ = machine.machineResult
-        _ = machine.machineLocalPartial
         return 0
     }
 

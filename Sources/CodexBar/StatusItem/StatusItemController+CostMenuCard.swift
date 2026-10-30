@@ -88,14 +88,8 @@ extension StatusItemController {
         return item
     }
 
-    static func showsMachineCostMenu(provider: UsageProvider, costSubmenuEnabled: Bool) -> Bool {
-        provider == .codex && costSubmenuEnabled
-    }
-
     func showsMachineCostMenu(for provider: UsageProvider) -> Bool {
-        Self.showsMachineCostMenu(
-            provider: provider,
-            costSubmenuEnabled: self.settings.costSummaryShowsSubmenu(for: provider))
+        provider == .codex && self.settings.costSummaryShowsSubmenu(for: provider)
     }
 
     func addCostMenuItems(
