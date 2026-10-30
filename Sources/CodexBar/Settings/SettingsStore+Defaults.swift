@@ -1191,10 +1191,6 @@ extension SettingsStore {
             .filter { (try? RemoteCodexCostFetcher.validateHost($0)) != nil }
     }
 
-    static func validCostUsageHosts(_ hosts: [String], manualHosts: String) -> [String] {
-        self.availableCostUsageHosts(manualHosts).filter { hosts.contains($0) }
-    }
-
     var selectableCostUsageHosts: [String] {
         Self.availableCostUsageHosts(self.agentSessionsManualHosts)
     }
@@ -1204,7 +1200,7 @@ extension SettingsStore {
         set {
             self.setDefault(
                 \.costUsageHosts,
-                Self.validCostUsageHosts(newValue, manualHosts: self.agentSessionsManualHosts),
+                self.selectableCostUsageHosts.filter(newValue.contains),
                 key: "costUsageHosts")
         }
     }

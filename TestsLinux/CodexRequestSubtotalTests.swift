@@ -95,7 +95,7 @@ struct CodexRequestSubtotalTests {
         pretty: Bool, outputBytes: Int) throws
     {
         let ledger = try Self.ledger(outputBytes: outputBytes, pretty: pretty)
-        let json = CodexBarCLI.encodeJSON(ledger, pretty: pretty)
+        let json = CodexIdentifiedCollection.encodeJSON(ledger, pretty: pretty)
         let emittedBytes = json.map { $0.utf8.count + 1 } ?? 0
 
         #expect(emittedBytes == (outputBytes <= CodexRequestLedger.maximumOutputBytes ? outputBytes : 0))
@@ -125,6 +125,41 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test
+    func `source subtotals are app opt-in and omitted from the wire`() async throws {
+        let fixture = Self.ledger()
+        let result = try await CodexIdentifiedCollection.collect(
+            remotes: ["remote"],
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            includeSourceSubtotals: true,
+            local: { fixture },
+            fetchRemote: { _ in fixture })
+        #expect(result.reports.map { $0.subtotal?.requestCount } == [1, 1])
+        #expect(result.subtotal?.requestCount == 1)
+        let json = try #require(CodexIdentifiedCollection.encodeJSON(result, pretty: false))
+        let object = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let reports = try #require(object["reports"] as? [[String: Any]])
+        #expect(reports.allSatisfy { $0["subtotal"] == nil })
+        let local = try await CodexIdentifiedCollection.collect(
+            remotes: [],
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            includeSourceSubtotals: true,
+            local: { fixture },
+            fetchRemote: { _ in throw CancellationError() })
+        #expect(local.subtotal == nil)
+        #expect(local.reports.first?.subtotal?.requestCount == 1)
+        #expect(CodexIdentifiedCollection.window(days: 365, endUnixMs: 0) == nil)
+        let cli = try await CodexIdentifiedCollection.collect(
+            remotes: ["remote"],
+            startUnixMs: Self.start,
+            endUnixMs: Self.end,
+            local: { fixture },
+            fetchRemote: { _ in fixture })
+        #expect(cli.reports.allSatisfy { $0.subtotal == nil })
+    }
+
+    @Test
     func `local-only identified collection keeps the ledger without pricing a subtotal`() async throws {
         let ledger = Self.ledger()
         let report = try await CodexIdentifiedCollection.collect(
@@ -135,7 +170,6 @@ struct CodexRequestSubtotalTests {
             fetchRemote: { _ in Issue.record("No remote host should be requested"); return ledger })
 
         #expect(report.subtotal == nil)
-        #expect(report.reports.allSatisfy { $0.subtotal == nil })
         let envelope = try #require(CodexBarCLI.encodeJSON(report, pretty: false))
         let envelopeObject = try #require(
             JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any])
@@ -349,7 +383,6 @@ struct CodexRequestSubtotalTests {
             local: { ledger },
             fetchRemote: { _ in received })
         #expect(combined.allSourcesAvailable)
-        #expect(combined.reports.allSatisfy { $0.subtotal == nil })
         #expect(combined.subtotal?.totalTokens == 110)
         let report = try await CodexIdentifiedCollection.collect(
             remotes: ["fixture-host"],
@@ -894,8 +927,8 @@ extension CodexRequestSubtotalTests {
     private static func ledger(outputBytes: Int, pretty: Bool = false) throws -> CodexRequestLedger {
         let emptyModel = self.source([self.accountingRow(model: nil, mode: nil)])
         let oneByteModel = self.source([self.accountingRow(model: "x", mode: nil)])
-        let emptyWire = try #require(CodexBarCLI.encodeJSON(emptyModel, pretty: pretty))
-        let oneByteWire = try #require(CodexBarCLI.encodeJSON(oneByteModel, pretty: pretty))
+        let emptyWire = try #require(CodexIdentifiedCollection.encodeJSON(emptyModel, pretty: pretty))
+        let oneByteWire = try #require(CodexIdentifiedCollection.encodeJSON(oneByteModel, pretty: pretty))
         let outputBytesWithoutModel = emptyWire.utf8.count + 1
         let oneByteDelta = oneByteWire.utf8.count - emptyWire.utf8.count
         let modelLength = outputBytes - outputBytesWithoutModel - oneByteDelta + 1
