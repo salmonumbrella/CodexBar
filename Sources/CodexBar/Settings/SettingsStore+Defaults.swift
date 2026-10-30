@@ -1186,9 +1186,35 @@ extension SettingsStore {
         set { self.setDefault(\.agentSessionLabelStyleRaw, newValue.rawValue, key: "agentSessionLabelStyle") }
     }
 
+    static func availableCostUsageHosts(_ manualHosts: String) -> [String] {
+        RemoteSessionFetcher.sanitizedHosts(manualHosts.components(separatedBy: ","))
+            .filter { (try? RemoteCodexCostFetcher.validateHost($0)) != nil }
+    }
+
+    static func validCostUsageHosts(_ hosts: [String], manualHosts: String) -> [String] {
+        self.availableCostUsageHosts(manualHosts).filter { hosts.contains($0) }
+    }
+
+    var selectableCostUsageHosts: [String] {
+        Self.availableCostUsageHosts(self.agentSessionsManualHosts)
+    }
+
+    var costUsageHosts: [String] {
+        get { self.defaultsState.costUsageHosts }
+        set {
+            self.setDefault(
+                \.costUsageHosts,
+                Self.validCostUsageHosts(newValue, manualHosts: self.agentSessionsManualHosts),
+                key: "costUsageHosts")
+        }
+    }
+
     var agentSessionsManualHosts: String {
         get { self.defaultsState.agentSessionsManualHosts }
-        set { self.setDefault(\.agentSessionsManualHosts, newValue, key: "agentSessionsManualHosts") }
+        set {
+            self.setDefault(\.agentSessionsManualHosts, newValue, key: "agentSessionsManualHosts")
+            self.costUsageHosts = self.costUsageHosts
+        }
     }
 
     var agentSessionsHideUnreachableHosts: Bool {

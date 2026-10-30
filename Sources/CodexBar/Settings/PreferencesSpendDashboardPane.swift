@@ -150,6 +150,9 @@ struct SpendDashboardPane: View {
                     self.refreshStatus
                     self.codexCostCatchUpPanel
                     self.content
+                    if SpendDashboardSource.costCapableProviders(store: self.store).contains(.codex) {
+                        MachineSpendDetail(settings: self.settings, store: self.store, controller: self.controller)
+                    }
                     self.dataControls
                 }
             }

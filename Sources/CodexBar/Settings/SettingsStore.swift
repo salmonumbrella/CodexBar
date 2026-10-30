@@ -721,6 +721,9 @@ extension SettingsStore {
             agentSessionsRemoteEnabled: userDefaults.bool(forKey: "agentSessionsRemoteEnabled"),
             agentSessionLabelStyleRaw: userDefaults.string(forKey: "agentSessionLabelStyle")
                 ?? AgentSessionLabelStyle.project.rawValue,
+            costUsageHosts: Self.validCostUsageHosts(
+                userDefaults.stringArray(forKey: "costUsageHosts") ?? [],
+                manualHosts: userDefaults.string(forKey: "agentSessionsManualHosts") ?? ""),
             agentSessionsManualHosts: userDefaults.string(forKey: "agentSessionsManualHosts") ?? "",
             agentSessionsHideUnreachableHosts: userDefaults.object(
                 forKey: "agentSessionsHideUnreachableHosts") as? Bool ?? false,
