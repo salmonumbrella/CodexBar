@@ -156,14 +156,14 @@ struct SpendDashboardPane: View {
                 } else {
                     self.header
                     SpendTimeZoneControls(settings: self.settings)
-                    self.refreshStatus
-                    self.codexCostCatchUpPanel
-                    self.content
                     // Provider-specific by design: by-machine detail runs the Codex-only identified-request collector.
                     if SpendDashboardSource.costCapableProviders(store: self.store).contains(.codex) {
                         MachineSpendDetail(settings: self.settings, store: self.store, controller: self.controller)
                             .id("machineSpend")
                     }
+                    self.refreshStatus
+                    self.codexCostCatchUpPanel
+                    self.content
                     self.dataControls
                 }
             }
