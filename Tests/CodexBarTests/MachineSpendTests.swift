@@ -6,6 +6,22 @@ import Testing
 @MainActor
 struct MachineSpendTests {
     @Test
+    func `editing a prefix preserves retained consent until the host list is committed`() {
+        let defaults = InMemoryUserDefaults()
+        let settings = testSettingsStore(suiteName: #function, userDefaults: defaults)
+        settings.agentSessionsManualHosts = "devbox"
+        settings.costUsageHosts = ["devbox"]
+        var draft = AgentSessionHostsDraft(settings: settings)
+        draft.text = "gdevbox"
+        #expect(settings.agentSessionsManualHosts == "devbox")
+        #expect(settings.costUsageHosts == ["devbox"])
+        draft.text = "gpu, devbox"
+        draft.commit(to: settings)
+        #expect(settings.agentSessionsManualHosts == "gpu, devbox")
+        #expect(settings.costUsageHosts == ["devbox"])
+    }
+
+    @Test
     func `removing and readding shared host revokes consent across reload`() {
         let defaults = InMemoryUserDefaults()
         let settings = testSettingsStore(suiteName: #function, userDefaults: defaults)

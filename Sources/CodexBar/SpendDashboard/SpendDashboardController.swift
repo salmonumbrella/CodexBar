@@ -1225,6 +1225,7 @@ final class SpendDashboardController {
                 remotes: hosts,
                 startUnixMs: start,
                 endUnixMs: end,
+                includeSourceSubtotals: true,
                 local: { try await CodexRequestLedger.load(startUnixMs: start, endUnixMs: end) },
                 fetchRemote: {
                     try await RemoteCodexCostFetcher().fetchIdentifiedUsage(

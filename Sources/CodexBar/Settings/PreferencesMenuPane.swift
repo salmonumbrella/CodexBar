@@ -172,24 +172,46 @@ struct AgentSessionsSettingsSection: View {
 }
 
 @MainActor
+struct AgentSessionHostsDraft {
+    var text: String
+
+    init(settings: SettingsStore) { self.text = settings.agentSessionsManualHosts }
+
+    func commit(to settings: SettingsStore) { settings.agentSessionsManualHosts = self.text }
+}
+
+@MainActor
 struct AgentSessionHostsEditor: View {
     static let inputFormatHint = "user@host, user@host"
 
     @Bindable var settings: SettingsStore
+    @State private var draft: AgentSessionHostsDraft
+    @FocusState private var isHostsFieldFocused: Bool
+
+    init(settings: SettingsStore) {
+        self.settings = settings
+        self._draft = State(initialValue: AgentSessionHostsDraft(settings: settings))
+    }
 
     var body: some View {
         LabeledContent(L("agent_sessions_hosts_title")) {
             TextField(
                 L("agent_sessions_hosts_title"),
-                text: self.$settings.agentSessionsManualHosts,
+                text: self.$draft.text,
                 prompt: Text(verbatim: Self.inputFormatHint))
                 .labelsHidden()
+                .focused(self.$isHostsFieldFocused)
+                .onSubmit { self.draft.commit(to: self.settings) }
                 .textFieldStyle(.roundedBorder)
                 .frame(minWidth: 220, idealWidth: 280)
                 .accessibilityLabel(L("agent_sessions_hosts_title"))
         }
         .disabled(!self.settings.agentSessionsEnabled || !self.settings.agentSessionsRemoteEnabled)
         .help(L("agent_sessions_remote_subtitle"))
+        .onDisappear { self.draft.commit(to: self.settings) }
+        .onChange(of: self.isHostsFieldFocused) { _, focused in
+            if !focused { self.draft.commit(to: self.settings) }
+        }
     }
 }
 

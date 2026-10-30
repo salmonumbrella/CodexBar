@@ -21,6 +21,7 @@ struct CodexIdentifiedCollectionTests {
             remotes: ["remote"],
             startUnixMs: 0,
             endUnixMs: 1000,
+            includeSourceSubtotals: true,
             local: { fixture },
             fetchRemote: { _ in fixture })
         #expect(result.reports.map { $0.subtotal?.requestCount } == [1, 1])
@@ -35,12 +36,17 @@ struct CodexIdentifiedCollectionTests {
             remotes: [],
             startUnixMs: 0,
             endUnixMs: 1000,
+            includeSourceSubtotals: true,
             local: { fixture },
             fetchRemote: { _ in throw CancellationError() })
         #expect(CodexIdentifiedCollection.window(days: 2, endUnixMs: 172_800_001) == 86_400_000)
         #expect(CodexIdentifiedCollection.window(days: 365, endUnixMs: 0) == nil)
         #expect(local.subtotal == nil)
         #expect(local.reports.first?.subtotal?.requestCount == 1)
-        #expect(local.localLedgerJSON == CodexIdentifiedCollection.encodeJSON(fixture, pretty: false))
+        let exported = try #require(local.localLedgerJSON)
+        let expected = try #require(CodexIdentifiedCollection.encodeJSON(fixture, pretty: false))
+        let exportedObject = try #require(JSONSerialization.jsonObject(with: Data(exported.utf8)) as? NSDictionary)
+        let expectedObject = try #require(JSONSerialization.jsonObject(with: Data(expected.utf8)) as? NSDictionary)
+        #expect(exportedObject == expectedObject)
     }
 }

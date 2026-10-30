@@ -51,6 +51,7 @@ package enum CodexIdentifiedCollection {
         startUnixMs: Int64,
         endUnixMs: Int64,
         pretty: Bool = false,
+        includeSourceSubtotals: Bool = false,
         now: @Sendable () -> Date = { Date() },
         local: @Sendable () async throws -> CodexRequestLedger,
         fetchRemote: @Sendable (String) async throws -> CodexRequestLedger) async throws -> CodexIdentifiedResult
@@ -58,7 +59,7 @@ package enum CodexIdentifiedCollection {
         var reports: [CodexIdentifiedSource] = []
         var subtotal: CodexRequestSubtotal?
         var localLedgerJSON: String?
-        let merge = CodexRequestLedger.makeMerger()
+        let merge = remotes.isEmpty && !includeSourceSubtotals ? nil : CodexRequestLedger.makeMerger()
         let hosts = ["local"] + remotes
         for (sourceIndex, host) in hosts.enumerated() {
             try Task.checkCancellation()
@@ -73,7 +74,7 @@ package enum CodexIdentifiedCollection {
                     }
                     if remotes.isEmpty { localLedgerJSON = json }
                 }
-                if !remotes.isEmpty {
+                if !remotes.isEmpty, let merge {
                     // Reject an overflowing union while the earlier sources remain available.
                     subtotal = try merge(reports.compactMap(\.ledger) + [ledger])
                 }
@@ -83,7 +84,9 @@ package enum CodexIdentifiedCollection {
                     collectedAt: now(),
                     ledger: ledger,
                     error: nil,
-                    subtotal: try? merge([ledger])))
+                    subtotal: includeSourceSubtotals
+                        ? (sourceIndex == 0 ? subtotal : nil) ?? (try? merge?([ledger]))
+                        : nil))
             } catch is CancellationError {
                 throw CancellationError()
             } catch {

@@ -135,6 +135,7 @@ struct CodexRequestSubtotalTests {
             fetchRemote: { _ in Issue.record("No remote host should be requested"); return ledger })
 
         #expect(report.subtotal == nil)
+        #expect(report.reports.allSatisfy { $0.subtotal == nil })
         let envelope = try #require(CodexBarCLI.encodeJSON(report, pretty: false))
         let envelopeObject = try #require(
             JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any])
@@ -348,6 +349,7 @@ struct CodexRequestSubtotalTests {
             local: { ledger },
             fetchRemote: { _ in received })
         #expect(combined.allSourcesAvailable)
+        #expect(combined.reports.allSatisfy { $0.subtotal == nil })
         #expect(combined.subtotal?.totalTokens == 110)
         let report = try await CodexIdentifiedCollection.collect(
             remotes: ["fixture-host"],
