@@ -4,7 +4,23 @@
 
 ### Added
 
-- CLI: allow repeated `--remote` hosts for Codex `--identified-only` JSON, deduplicate identified requests across hosts, report per-host sources and collection timestamps, and preserve successful results with a nonzero exit when a host fails.
+- CLI: combine identified Codex requests from multiple SSH hosts, counting copies once and keeping successful sources when a host fails (#4834). Thanks @salmonumbrella!
+
+- CLI: estimate deduplicated Codex request spend across SSH hosts with explicit unknown prices, conflict exclusions, and a coordinated schema 2 upgrade (#4833, #4836). Thanks @salmonumbrella!
+
+### Fixed
+
+- Localization: correctly validate reordered plural arguments after ordinary placeholders. (#4817) Thanks @xuancao1953-1!
+- Codex: preserve established local cost coverage and catch-up progress when switching Codex homes (#4770, #4773). Thanks @harjothkhara!
+- OpenCodex: reduce temporary memory use when importing large usage logs (#4803).
+- Cursor: explain when the Cursor app session has expired and no browser session works, with steps to sign in again (#4804). Thanks @julianpinedayyz!
+
+### Changed
+
+- CLI: malformed or ambiguous arguments now fail with an error instead of being guessed (Commander 0.3.0).
+- Menu bar: make neutral pace percentages with font-scaled green/red state bars the default, preserving saved color choices (#4714, #4791). Thanks @arnodirlam!
+- Updates: refresh Sparkle to improve update installation, download progress, and release-note handling.
+
 
 ## 0.82.0 — 2026-10-26
 
@@ -39,6 +55,7 @@
 - Trae CN: distinguish the Usage meter from the Credits details in Visible usage items while preserving hidden choices (#4764, #4780). Thanks @LeoLin990405 and @liuyuplus!
 - WorkBuddy: keep resets on the paid subscription cycle instead of an earlier trial or reward expiry (#4767). Thanks @codertesla!
 - WorkBuddy: use the official mascot instead of the placeholder letter icon (#4768). Thanks @codertesla!
+
 
 ## 0.81.0 — 2026-10-24
 

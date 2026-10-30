@@ -54,6 +54,11 @@ See [Configuration](configuration.md) for the schema and [Providers](providers.m
 sources and setup guide. The [provider ID list](provider-ids.md) is generated from the registry;
 `codexbar config providers` lists providers and their configured enablement without fetching usage.
 
+Arguments are parsed strictly: unknown options, missing option values, and extra positional arguments
+fail before the command runs. For example, `codex-accounts promote` accepts one account identifier;
+a second identifier is an error. For an option value beginning with a dash, use the equals form
+(for example, `--output=-snapshot.json`).
+
 ## Command
 - `codexbar` defaults to the `usage` command.
   - Multi-provider usage fetches run up to three providers concurrently. Text, JSON, and diagnostics retain selection order; a failed provider does not prevent the others from finishing. Refreshed credentials share a command-scoped writer, while externally changed credentials remain protected.
@@ -106,18 +111,30 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
   - Host reports always scan native Codex history only. `--days` and `--refresh` apply on both hosts; each host retains its own calendar and pricing. Both modes reject `--group-by` and `--breakdown`; `--remote` and `--summary-only` cannot be combined. Ordinary `cost` output remains compatible.
   - Remote capture is bounded to 16 KiB per stream during execution, with a 60-second client process timeout. Unsupported versions, invalid totals, overflow, and unexpected output fail closed. Remote failure retains a successful local row and exits nonzero; JSON remains one document. Ctrl-C and termination signals cancel collection and await local SSH subprocess cleanup. The remote scanner follows its SSH server's disconnect behavior and may finish after the client exits.
 - `codexbar cost --provider codex --identified-only --format json --days 30` exports an experimental,
-  versioned native request ledger. Repeat `--remote` to return source reports and one deduplicated
+  versioned native request ledger. Local-only output contains per-request rows, without `costUSD` or
+  `unpricedRequestCount`. Repeat `--remote` to return source reports and a combined
   **identified-request subtotal** from this machine and every requested SSH host, for example:
   `codexbar cost --provider codex --identified-only --format json --remote build-a --remote build-b`.
-  Each host needs a CLI supporting this option. `--identified-end <Unix milliseconds>` pins the inclusive end;
+  Every host needs a CLI supporting schema 2. `--identified-end <Unix milliseconds>` pins the inclusive end;
   the start is UTC midnight
   `days - 1` days earlier. Saved periods and time zones do not change this window.
   - Only owned native `token_usage_record` events with session/thread and response IDs contribute.
     Legacy token-count events and unidentified usage are excluded; this subtotal is not complete account usage.
-  - Identical copies count once. Contradictory copies of an identity are excluded throughout that merge,
+  - Identical copies count once. Timestamp or token contradictions permanently exclude an identity,
     including after a later matching copy. Identities are length-framed SHA-256 hashes; exported rows contain
-    timestamps and token categories, without conversation text, model names, paths or raw session IDs.
-  - Combined prices are explicitly unavailable (`costUSD: null`). This stage does not estimate dollars.
+    timestamps, token categories, exact billing model identifier, pricing mode (`standard` / `priority` / null),
+    and an `includedInPlan` Boolean, without conversation text, account identifiers, paths or raw session IDs.
+    Model, mode or inclusion disagreements retain tokens but permanently clear pricing evidence, even after
+    later clean copies or re-export. Copying rollout history without equivalent trace evidence can retain
+    tokens while combined dollars remain unknown. Schema 1 sources are unavailable until their CLI is
+    updated to schema 2; successful local sources survive with a nonzero exit status.
+  - Combined `costUSD` is an API-equivalent estimate, calculated after deduplication using one collector
+    catalog/custom-rate snapshot and each request's timestamp and token threshold. Source-computed dollars
+    are never added. Unknown prices produce explicit `costUSD: null` and an `unpricedRequestCount`;
+    an empty accepted set is $0. Price incompleteness alone does not set the coverage flag `partial`.
+    Qualified Auto-review usage is included at $0 unless the collector supplies custom rates. Unknown native
+    tiers, missing tier records and unsupported Priority rates stay unpriced; retained traces only add Priority.
+    The last recorded tier is an estimate and can lag unmaterialized live `/fast` changes.
     Collection uses the existing one-shot SSH safeguards, with no persistent ledger. Exports are limited to
     50,000 records and conflict IDs and 32 MiB; exceeding a limit rejects the source rather than truncating usage.
     Sources are collected locally first, then sequentially in argument order, including repeated aliases.
@@ -477,9 +494,11 @@ separate from quota percentages; zero is retained and unavailable or invalid bal
 ## Exit codes
 - 0: success
 - 2: provider missing (binary not on PATH)
-- 3: parse/format error
+- 3: provider response parse/format error
 - 4: CLI timeout
-- 1: unexpected failure
+- 1: command routing/argument error or unexpected failure
+
+`codexbar guard` uses `64` for invalid arguments; its other exit codes are listed above.
 
 For `codexbar dashboard`, `0` includes a valid partial snapshot whose provider rows contain errors. The command exits
 non-zero only when it cannot produce a valid snapshot document.

@@ -15,6 +15,11 @@ struct CodexIdentifiedResult: Codable, Sendable {
     let subtotal: CodexRequestSubtotal?
     let allSourcesAvailable: Bool
     let partial: Bool
+    var localLedgerJSON: String?
+
+    enum CodingKeys: String, CodingKey {
+        case reports, subtotal, allSourcesAvailable, partial
+    }
 }
 
 extension CodexBarCLI {
@@ -60,6 +65,7 @@ extension CodexBarCLI {
                 remotes: hosts,
                 startUnixMs: start,
                 endUnixMs: end,
+                pretty: output.pretty,
                 local: { try await CodexRequestLedger.load(startUnixMs: start, endUnixMs: end) },
                 fetchRemote: {
                     try await RemoteCodexCostFetcher().fetchIdentifiedUsage(
@@ -75,8 +81,8 @@ extension CodexBarCLI {
         }
         do {
             let report = try result.get()
-            if hosts.isEmpty, let ledger = report.reports.first?.ledger {
-                Self.printJSON(ledger, pretty: output.pretty)
+            if hosts.isEmpty, let localJSON = report.localLedgerJSON {
+                print(localJSON)
             } else {
                 Self.printJSON(report, pretty: output.pretty)
             }
@@ -91,39 +97,53 @@ extension CodexBarCLI {
         remotes: [String],
         startUnixMs: Int64,
         endUnixMs: Int64,
+        pretty: Bool = false,
         now: @Sendable () -> Date = { Date() },
         local: @Sendable () async throws -> CodexRequestLedger,
         fetchRemote: @Sendable (String) async throws -> CodexRequestLedger) async throws -> CodexIdentifiedResult
     {
         var reports: [CodexIdentifiedSource] = []
         var subtotal: CodexRequestSubtotal?
-        var union = CodexRequestUnion(startUnixMs: startUnixMs, endUnixMs: endUnixMs)
-        for (index, host) in (["local"] + remotes).enumerated() {
-            let source = index == 0 ? "local" : "ssh"
+        var localLedgerJSON: String?
+        let merge = remotes.isEmpty ? nil : CodexRequestLedger.makeMerger()
+        let hosts = ["local"] + remotes
+        for (sourceIndex, host) in hosts.enumerated() {
             try Task.checkCancellation()
             do {
-                let ledger = try await (index == 0 ? local() : fetchRemote(host))
+                let ledger = try await (sourceIndex == 0 ? local() : fetchRemote(host))
                 try Task.checkCancellation()
-                // Reject an overflowing source or union while the earlier sources remain available.
-                var candidate = union
-                try candidate.insert(ledger)
-                let acceptedSubtotal = try candidate.subtotal()
-                union = candidate
-                subtotal = acceptedSubtotal
-                reports.append(.init(host: host, source: source, collectedAt: now(), ledger: ledger, error: nil))
+                try ledger.validate(startUnixMs: startUnixMs, endUnixMs: endUnixMs)
+                // Bound local producer output; remote bytes were already bounded by the SSH reader.
+                if sourceIndex == 0 {
+                    guard let json = Self.encodeJSON(ledger, pretty: pretty) else {
+                        throw RemoteCodexCostError.invalidReport
+                    }
+                    if remotes.isEmpty { localLedgerJSON = json }
+                }
+                if let merge {
+                    // Reject an overflowing union while the earlier sources remain available.
+                    subtotal = try merge(reports.compactMap(\.ledger) + [ledger])
+                }
+                reports.append(.init(
+                    host: host,
+                    source: sourceIndex == 0 ? "local" : "ssh",
+                    collectedAt: now(),
+                    ledger: ledger,
+                    error: nil))
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 try Task.checkCancellation()
                 reports.append(.init(
                     host: host,
-                    source: source,
+                    source: sourceIndex == 0 ? "local" : "ssh",
                     collectedAt: nil,
                     ledger: nil,
-                    error: index == 0
+                    error: sourceIndex == 0
                         ? "Local native Codex identified usage is unavailable."
                         :
-                        "Remote identified usage is unavailable. Check SSH and update its CLI for --identified-only."))
+                        "Remote identified usage is unavailable. Check SSH and update its CLI " +
+                        "for schema 2 --identified-only."))
             }
         }
         try Task.checkCancellation()
@@ -132,6 +152,7 @@ extension CodexBarCLI {
             reports: reports,
             subtotal: subtotal,
             allSourcesAvailable: available,
-            partial: !available || subtotal?.partial != false)
+            partial: !available || (subtotal?.partial ?? false),
+            localLedgerJSON: localLedgerJSON)
     }
 }

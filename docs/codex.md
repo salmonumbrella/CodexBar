@@ -375,6 +375,11 @@ there is no `auth.json`. Local cost estimates do not require account identity or
 Managed and profile homes retain their separate history scopes; a home already represented by a visible account
 is not added again as a local source. This does not read the CLI's keyring credentials.
 
+Each Codex home keeps its scan progress, discovery, coverage, and daily totals in the existing shared SQLite store.
+Switching homes does not reset another home's completed history or pending work, and retention only prunes the
+selected home's rows. Existing singleton state is migrated in place to its recorded home (or the default home when
+no root was recorded), retaining file IDs and history without creating per-home database copies.
+
 The static musl Linux CLI reserves an 8 MiB thread stack so scanning non-empty Codex session logs
 does not exhaust musl's smaller default stack. The scanner and cache format stay shared with glibc and macOS.
 
@@ -384,9 +389,19 @@ pricing provenance, missing values, and incomplete-request counts. Only bounded 
 the local result and returns a nonzero exit code. See [CLI host reporting](cli.md) for the versioned summary contract.
 
 For copied or resumed histories, `cost --provider codex --identified-only --format json --remote <ssh-host>`
-reports an **identified-request subtotal** over one UTC window. Strong native session/response identities are
-deduplicated; conflicting identities and legacy/unidentified usage are excluded and reported. Combined prices are
-unavailable (`costUSD: null`). This opt-in CLI mode does not change ordinary cost reports or account quota.
+reports an **identified-request subtotal** over one UTC window. Repeat `--remote` to include more SSH hosts. Strong native session/response identities are
+deduplicated; timestamp/token conflicts and legacy/unidentified usage are excluded and reported. Schema 2 exports
+exact billing model identifier, nullable Standard/Priority mode, and plan-inclusion evidence alongside tokens and time.
+Pricing disagreements retain tokens but permanently clear pricing evidence, including through re-export;
+trace evidence can differ across hosts. The collector prices accepted requests with one local pricing snapshot.
+`costUSD` is numeric only when all accepted requests are priced (an empty set is $0); otherwise it is explicitly null and
+`unpricedRequestCount` explains the gap. `partial` remains a source/accounting-coverage flag. These are
+API-equivalent estimates, not complete account spend. Unknown tiers and unsupported Priority rates stay
+unpriced even where ordinary cost reports use a Standard fallback. Qualified Auto-review requests are free
+unless collector custom rates override them; exporter custom rates do not change their qualification.
+Last recorded tiers are estimates: live `/fast` changes may not be materialized in history. Experimental
+`step_model_switching` can exceed the available turn-level model/tier evidence.
+Every participating CLI must support schema 2. This opt-in mode does not change ordinary reports or account quota.
 
 - Menu source selection:
   - By default, a selected managed account keeps its own `CODEX_HOME` session history.
