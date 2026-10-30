@@ -13,6 +13,22 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test
+    func `current wire schema prices an identified request once`() throws {
+        let version = CodexRequestLedger(startUnixMs: Self.start, endUnixMs: Self.end).schemaVersion
+        let wire = """
+        {"schemaVersion":\(version),"provider":"codex","startUnixMs":\(Self.start),"endUnixMs":\(Self.end),
+        "records":[{"id":"\(String(repeating: "a", count: 64))","timestampUnixMs":\(Self.end),
+        "inputTokens":100,"cacheReadTokens":20,"outputTokens":10,"reasoningTokens":3,
+        "model":"gpt-5","pricingMode":"standard","includedInPlan":false}],
+        "conflictingIDs":[],"excludedCount":0,"partial":false}
+        """
+        let ledger = try JSONDecoder().decode(CodexRequestLedger.self, from: Data(wire.utf8))
+        let subtotal = try CodexRequestLedger.merge([ledger, ledger])
+        #expect(subtotal.requestCount == 1 && subtotal.totalTokens == 110)
+        #expect(try #require(subtotal.costUSD) > 0)
+    }
+
+    @Test
     func `identified export bounds Priority evidence to its padded scan days`() throws {
         let fixture = try CodexPrioritySQLiteTests.Fixture()
         defer { fixture.cleanup() }
