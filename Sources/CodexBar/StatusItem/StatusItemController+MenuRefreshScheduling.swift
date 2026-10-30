@@ -136,6 +136,9 @@ extension StatusItemController {
                 ].joined(separator: ":"))
         }
 
+        if self.showsMachineCostMenu(for: .codex) {
+            parts += self.store.sharedSpendDashboardController().machineCostMenuLines()
+        }
         return parts.joined(separator: "|")
     }
 

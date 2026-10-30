@@ -746,7 +746,7 @@ extension StatusItemController {
 
         guard let model = self.menuCardModel(for: context.selectedProvider) else { return false }
         let renderedModel = self.menuCardRefreshMonitor.model(for: model.provider, fallback: model)
-        if context.openAIContext.hasOpenAIWebMenuItems ||
+        if context.openAIContext.hasOpenAIWebMenuItems || self.showsMachineCostMenu(for: context.currentProvider) ||
             self.requiresSectionedMenuForProviderDerivedCost(provider: context.currentProvider)
         {
             let webItems = OpenAIWebMenuItems(
@@ -1382,14 +1382,11 @@ extension StatusItemController {
                 heightCacheFingerprint: layoutModel.heightFingerprint(section: "extraUsage"),
                 submenu: extraUsageSubmenu))
         }
-        if hasCost {
+        if hasCost || self.showsMachineCostMenu(for: provider) {
             addSectionSeparator()
             let costSubmenu = webItems.hasCostHistory ? self
                 .makeCostHistorySubmenu(provider: provider, width: width) : nil
-            menu.addItem(self.makeCostMenuCardItem(
-                model: model,
-                submenu: costSubmenu,
-                width: width))
+            self.addCostMenuItems(to: menu, model: model, submenu: costSubmenu, width: width)
         }
         if !hasCredits, webItems.hasCreditsHistory, self.settings.showOptionalCreditsAndExtraUsage {
             addSectionSeparator()

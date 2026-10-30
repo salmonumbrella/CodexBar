@@ -1094,6 +1094,8 @@ final class SpendDashboardController {
     typealias PublicationHandler = @MainActor @Sendable (SpendDashboardPublication) -> Void
 
     typealias MachineLoader = @Sendable ([String], Int, Int64, Int64) async throws -> CodexIdentifiedResult
+    var machineExpanded = false
+    private(set) var machineRevealRevision = 0
     private(set) var machineResult: CodexIdentifiedResult?
     private(set) var machineRunning = false
     private(set) var machineWindow: ClosedRange<Date>?
@@ -1252,6 +1254,13 @@ final class SpendDashboardController {
 
     func update(configuration: SpendDashboardConfiguration, force: Bool = false) {
         self.refreshRetainedCodexDisplayNames(configuration.codexAccountDisplayNames)
+        if let previous = self.configuration,
+           previous.costUsageEnabled != configuration.costUsageEnabled ||
+           previous.providerIDs.contains("codex") != configuration.providerIDs.contains("codex") ||
+           previous.codexAccountIdentities != configuration.codexAccountIdentities
+        {
+            self.cancelMachineSpend()
+        }
         if force {
             self.configuration = configuration
             self.startLoad(configuration: configuration, phase: .forcing)
@@ -1958,6 +1967,37 @@ final class SpendDashboardController {
 }
 
 extension SpendDashboardController {
+    func revealMachineSpend() {
+        self.machineExpanded = true
+        self.machineRevealRevision &+= 1
+    }
+
+    func machineCostMenuLines() -> [String] {
+        Self.machineCostMenuLines(
+            result: self.machineResult, localPartial: self.machineLocalPartial, now: self.nowProvider())
+    }
+
+    static func machineCostMenuLines(result: CodexIdentifiedResult?, localPartial: Bool, now: Date) -> [String] {
+        let today = Int64(now.timeIntervalSince1970 * 1000) / 86_400_000 * 86_400_000
+        guard let result, let subtotal = result.todaySubtotal,
+              let captured = result.reports.compactMap(\.ledger).first,
+              captured.startUnixMs <= today, captured.endUnixMs >= today,
+              captured.endUnixMs < today + 86_400_000
+        else { return [] }
+        let tokens = L("%@ tokens", UsageFormatter.tokenCountString(subtotal.totalTokens))
+        let amount = subtotal.costUSD.map { UsageFormatter.currencyString($0, currencyCode: "USD") }
+        let usage = amount.map { "\($0) · \(tokens)" } ?? "\(tokens) · \(L("Price unknown"))"
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.timeZone = .gmt
+        format.dateFormat = "HH:mm"
+        let time = format.string(from: Date(timeIntervalSince1970: Double(captured.endUnixMs) / 1000))
+        let available = result.reports.filter { $0.ledger != nil }.count
+        var coverage = L("As of %@ UTC · %d/%d sources", time, available, result.reports.count)
+        if result.partial || subtotal.partial || localPartial { coverage += " · \(L("Partial coverage"))" }
+        return [L("Across machines · Codex identified only"), L("Today (UTC): %@", usage), coverage]
+    }
+
     func cancelMachineSpend() {
         self.machineTask?.cancel()
         self.machineTask = nil
@@ -1986,7 +2026,9 @@ extension SpendDashboardController {
         self.machineTask = Task { [weak self] in
             let result = try? await loader(hosts, days, start, end)
             guard !Task.isCancelled, let self else { return }
-            self.machineResult = result
+            if let result, self.machineResult == nil || result.reports.contains(where: { $0.ledger != nil }) {
+                self.machineResult = result
+            }
             self.machineRunning = false
             self.machineTask = nil
         }

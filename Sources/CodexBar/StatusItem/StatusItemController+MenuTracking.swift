@@ -377,7 +377,11 @@ extension StatusItemController {
     }
 
     func menuNeedsRefresh(_ menu: NSMenu) -> Bool {
-        self.menuSession.needsRefresh(ObjectIdentifier(menu))
+        let key = ObjectIdentifier(menu)
+        if self.menuSession.needsRefresh(key) { return true }
+        let providers = self.renderedProviders(for: menu)
+        return providers.contains(.codex) && self.showsMachineCostMenu(for: .codex) &&
+            self.menuIdentitySignatures[key] != self.menuIdentitySignature(for: providers)
     }
 
     func markMenuFresh(_ menu: NSMenu) {
@@ -410,6 +414,7 @@ extension StatusItemController {
             }
 
             if target == .codex {
+                parts += self.store.sharedSpendDashboardController().machineCostMenuLines()
                 parts.append(Self.menuIdentityField(self.account.email))
                 parts.append(Self.menuIdentityField(self.account.plan))
                 for account in self.settings.codexVisibleAccountProjectionForMenuDisplay?.visibleAccounts ?? [] {

@@ -333,21 +333,22 @@ public struct CodexRequestLedger: Codable, Sendable {
 
     /// Conflicts remain excluded even when a later source supplies a clean observation of the identity.
     public static func merge(_ ledgers: [Self]) throws -> CodexRequestSubtotal {
-        try self.makeMerger()(ledgers)
+        try self.makeMerger()(ledgers, nil)
     }
 
     /// Capture once so a multi-host collection cannot mix catalog or custom-rate revisions.
-    package static func makeMerger() -> @Sendable ([Self]) throws -> CodexRequestSubtotal {
+    package static func makeMerger() -> @Sendable ([Self], ClosedRange<Int64>?) throws -> CodexRequestSubtotal {
         let catalog = CostUsagePricing.modelsDevCatalog() ?? ModelsDevCatalog(providers: [:])
         let customPricing = CostUsagePricing.customPricingOverlay()
-        return { try self.merge($0, catalog: catalog, customPricing: customPricing) }
+        return { try self.merge($0, catalog: catalog, customPricing: customPricing, recordWindow: $1) }
     }
 
     /// Deterministic injection seam; a complete union uses one collector snapshot and resolver.
     static func merge(
         _ ledgers: [Self],
         catalog: ModelsDevCatalog,
-        customPricing: CostUsageCustomPricing) throws -> CodexRequestSubtotal
+        customPricing: CostUsageCustomPricing,
+        recordWindow: ClosedRange<Int64>? = nil) throws -> CodexRequestSubtotal
     {
         guard let first = ledgers.first else { throw RemoteCodexCostError.unavailable }
         var records: [String: CodexRequestRecord] = [:]
@@ -364,7 +365,10 @@ public struct CodexRequestLedger: Codable, Sendable {
             }
         }
         var total = 0
-        let accepted = records.values.filter { !conflicts.contains($0.id) }.sorted { $0.id < $1.id }
+        // Select only after reducing every observation, so cross-day conflicts remain excluded.
+        let accepted = records.values.filter {
+            !conflicts.contains($0.id) && (recordWindow?.contains($0.timestampUnixMs) ?? true)
+        }.sorted { $0.id < $1.id }
         let resolver = CostUsagePricing.CodexResolver(catalog: catalog)
         var cost = 0.0
         var unpriced = 0

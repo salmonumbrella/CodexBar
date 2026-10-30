@@ -40,48 +40,115 @@ extension StatusItemController {
     func makeCostMenuCardItem(
         model: UsageMenuCardView.Model,
         submenu: NSMenu?,
-        width: CGFloat) -> NSMenuItem
+        width: CGFloat,
+        machineLines: [String] = []) -> NSMenuItem
     {
         let title = Self.costMenuTitleForProvider(model.provider)
-        let tooltipLines = Self.costMenuTooltipLines(provider: model.provider, tokenUsage: model.tokenUsage)
+        let tooltipLines = Self.costMenuTooltipLines(
+            provider: model.provider, tokenUsage: model.tokenUsage, machineLines: machineLines)
         let visibleDetailLines = Self.costMenuVisibleDetailLines(
             provider: model.provider,
             tokenUsage: model.tokenUsage,
-            hasSubmenu: submenu != nil)
-        guard visibleDetailLines.isEmpty == false, self.menuCardRenderingEnabledForController else {
-            return Self.makeNativeCostMenuCardItem(
-                title: title,
-                visibleDetailLines: visibleDetailLines,
-                tooltipLines: tooltipLines,
-                submenu: submenu)
-        }
+            hasSubmenu: submenu != nil,
+            machineLines: machineLines)
+        return self.makeCostMenuRowItem(
+            CostMenuCardRowView(title: title, detailLines: visibleDetailLines, width: width),
+            tooltipLines: tooltipLines,
+            submenu: submenu,
+            provider: model.provider,
+            id: "menuCardCost")
+    }
 
+    private func makeCostMenuRowItem(
+        _ row: CostMenuCardRowView,
+        tooltipLines: [String],
+        submenu: NSMenu?,
+        provider: UsageProvider,
+        id: String) -> NSMenuItem
+    {
+        guard !row.detailLines.isEmpty, self.menuCardRenderingEnabledForController else {
+            return Self.makeNativeCostMenuCardItem(
+                title: row.title,
+                visibleDetailLines: row.detailLines,
+                tooltipLines: tooltipLines,
+                submenu: submenu,
+                id: id)
+        }
         let item = self.makeMenuCardItem(
-            CostMenuCardRowView(
-                title: title,
-                detailLines: visibleDetailLines,
-                width: width),
-            id: "menuCardCost",
-            width: width,
-            heightCacheScope: model.provider.rawValue,
-            heightCacheFingerprint: "costMenuRow:\(visibleDetailLines.count)",
+            row,
+            id: id,
+            width: row.width,
+            heightCacheScope: provider.rawValue,
+            heightCacheFingerprint: "costMenuRow:\(row.detailLines.count)",
             submenu: submenu,
             submenuIndicatorAlignment: .trailing,
             submenuIndicatorTopPadding: 0)
-        item.title = title
+        item.title = row.title
         item.toolTip = tooltipLines.joined(separator: "\n")
         return item
+    }
+
+    static func showsMachineCostMenu(provider: UsageProvider, costSubmenuEnabled: Bool) -> Bool {
+        provider == .codex && costSubmenuEnabled
+    }
+
+    func showsMachineCostMenu(for provider: UsageProvider) -> Bool {
+        Self.showsMachineCostMenu(
+            provider: provider,
+            costSubmenuEnabled: self.settings.costSummaryShowsSubmenu(for: provider))
+    }
+
+    func addCostMenuItems(
+        to menu: NSMenu,
+        model: UsageMenuCardView.Model,
+        submenu: NSMenu?,
+        width: CGFloat,
+        separateMachineScope: Bool = false)
+    {
+        let showsMachine = self.showsMachineCostMenu(for: model.provider)
+        let includeLocalCost = !separateMachineScope || self.store.tokenCostIsAccountAgnostic(for: model.provider)
+        let lines = showsMachine ? self.store.sharedSpendDashboardController().machineCostMenuLines() : []
+        if (includeLocalCost && model.tokenUsage != nil) || (!separateMachineScope && !lines.isEmpty) {
+            menu.addItem(self.makeCostMenuCardItem(
+                model: model, submenu: submenu, width: width, machineLines: separateMachineScope ? [] : lines))
+        }
+        guard showsMachine else { return }
+        if separateMachineScope {
+            if menu.items.last?.isSeparatorItem != true { menu.addItem(.separator()) }
+            if !lines.isEmpty {
+                menu.addItem(self.makeCostMenuRowItem(
+                    CostMenuCardRowView(
+                        title: L("Across machines"),
+                        detailLines: [L("Codex identified only")] + lines.dropFirst(),
+                        width: width),
+                    tooltipLines: lines,
+                    submenu: nil,
+                    provider: model.provider,
+                    id: "menuCardMachineCost"))
+            }
+        }
+        let action = NSMenuItem(title: L("By machine…"), action: #selector(self.openMachineSpend), keyEquivalent: "")
+        action.target = self
+        menu.addItem(action)
+    }
+
+    @objc private func openMachineSpend() {
+        _ = self.closeOpenMenusFromShortcutIfNeeded()
+        SessionUsageNavigation.shared.request = nil
+        self.store.sharedSpendDashboardController().revealMachineSpend()
+        self.settingsOpenHandler?(.usageSpend)
     }
 
     private static func makeNativeCostMenuCardItem(
         title: String,
         visibleDetailLines: [String],
         tooltipLines: [String],
-        submenu: NSMenu?) -> NSMenuItem
+        submenu: NSMenu?,
+        id: String) -> NSMenuItem
     {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = true
-        item.representedObject = "menuCardCost"
+        item.representedObject = id
         item.submenu = submenu
         // Submenu cost rows already show these details; keep tooltips only for inline rows
         // where they reveal truncated text and avoid flashes during in-place menu refreshes.
@@ -100,10 +167,10 @@ extension StatusItemController {
 
     static func costMenuTooltipLines(
         provider _: UsageProvider,
-        tokenUsage: UsageMenuCardView.Model.TokenUsageSection?) -> [String]
+        tokenUsage: UsageMenuCardView.Model.TokenUsageSection?,
+        machineLines: [String] = []) -> [String]
     {
-        let lines = [
-            tokenUsage?.sessionLine,
+        let lines = [tokenUsage?.sessionLine].compactMap(\.self) + machineLines + [
             tokenUsage?.monthLine,
             tokenUsage?.meteredLine,
         ]
@@ -116,11 +183,11 @@ extension StatusItemController {
     static func costMenuVisibleDetailLines(
         provider: UsageProvider,
         tokenUsage: UsageMenuCardView.Model.TokenUsageSection?,
-        hasSubmenu: Bool) -> [String]
+        hasSubmenu: Bool,
+        machineLines: [String] = []) -> [String]
     {
-        guard !hasSubmenu else { return [] }
-        let primaryLines = ([
-            tokenUsage?.sessionLine,
+        guard !hasSubmenu || !machineLines.isEmpty else { return [] }
+        let primaryLines = ([tokenUsage?.sessionLine].compactMap(\.self) + machineLines + [
             tokenUsage?.monthLine,
             tokenUsage?.meteredLine,
         ]

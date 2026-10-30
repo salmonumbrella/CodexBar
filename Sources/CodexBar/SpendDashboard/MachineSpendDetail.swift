@@ -6,10 +6,9 @@ struct MachineSpendDetail: View {
     @Bindable var settings: SettingsStore
     let store: UsageStore
     @Bindable var controller: SpendDashboardController
-    @State private var expanded = false
 
     var body: some View {
-        DisclosureGroup(L("By machine"), isExpanded: self.$expanded) {
+        DisclosureGroup(L("By machine"), isExpanded: self.$controller.machineExpanded) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(self.settings.selectableCostUsageHosts.enumerated()), id: \.element) { index, host in
                     Toggle(self.machineName(host, index: index), isOn: Binding(
@@ -54,7 +53,8 @@ struct MachineSpendDetail: View {
             }
             .padding(.top, 8)
         }
-        .onChange(of: self.expanded) { _, open in
+        .onAppear { if self.controller.machineExpanded { self.run() } }
+        .onChange(of: self.controller.machineExpanded) { _, open in
             if open {
                 self.run()
             } else {
@@ -63,10 +63,10 @@ struct MachineSpendDetail: View {
         }
         .onChange(of: self.controller.selectedPeriod) { _, _ in
             self.controller.cancelMachineSpend()
-            if self.expanded { self.run() }
+            if self.controller.machineExpanded { self.run() }
         }
         .onChange(of: self.settings.costUsageHosts) { _, _ in self.controller.cancelMachineSpend() }
-        .onDisappear { self.expanded = false; self.controller.cancelMachineSpend() }
+        .onDisappear { self.controller.machineExpanded = false; self.controller.cancelMachineSpend() }
     }
 
     private var windowText: String {
