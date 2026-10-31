@@ -58,8 +58,8 @@ The addition of unsupported-backend token history also invalidates the Pi pricin
 ## Identified token history over SSH
 
 `codexbar cost --provider pi --identified-only --format json --days 30 --remote build-a --remote build-b`
-combines local Pi/OMP history with each SSH host, counting copied turns once. Omit `--remote` for
-a bare local ledger. This read-only mode scans native records afresh without pricing or updating the
+combines local Pi/OMP history with each SSH host, counting copies with the same session and entry IDs once.
+Omit `--remote` for a bare local ledger. This read-only mode scans native records afresh without pricing or updating the
 ordinary cost cache. Retained live-root scope and current process selectors still participate.
 
 Pi uses the shared schema 2 envelope with `provider: "pi"`. Identity comes from the first valid

@@ -26,6 +26,7 @@ struct PiRequestSubtotalTests {
         ]
         #if os(macOS)
         // Kernel-deny other processes and real-home reads so live Pi selectors cannot add personal history.
+        // Linux retains core fixtures and invalid-selector coverage without an uncontained successful CLI call.
         let realHome = try URL(fileURLWithPath: String(cString: #require(getpwuid(getuid())).pointee.pw_dir))
         try Data((self.header + self.row()).utf8).write(to: root.appendingPathComponent("session.jsonl"))
         let process = Process()
@@ -352,7 +353,7 @@ extension PiRequestSubtotalTests {
             try PiSessionCostScanner.loadIdentified(
                 startUnixMs: Self.start,
                 endUnixMs: Self.end,
-                options: .init(piSessionsRoot: root),
+                options: .init(piSessionsRoot: root, cacheRoot: root.appendingPathComponent("cache")),
                 checkCancellation: {})
         }
         #expect(ledger.records.count == 2 && ledger.partial)
