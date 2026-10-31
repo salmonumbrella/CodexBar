@@ -954,9 +954,10 @@ extension CostUsageStoreTests {
 
 extension CostUsageStoreTests {
     private static let testedPredecessorParserHashes = [
-        "5a57546c60494379", // Pricing export evidence leaves saved rows and settings unchanged.
+        "f98b2d0afc00443c", // Corrected revision-14 reports survive the identified-pricing export change.
+        "0ef5e15cc00e8e25", // Current main before resumed-tier and Fast pricing correction.
+        "5a57546c60494379", // Home-scoped main before archived-row retention.
         "e5909f60274b2c47", // Home scoping preserves the released rows and scan checkpoints.
-
         "4e1358d00a4a47b5", // Current main before the optional local-history source.
         "54a95e8fe7bd6ee9", // Selected-session inspection before checkpoint validation.
         "455876ace937d42a", // Current main before selected-session detail reads.
@@ -1097,12 +1098,8 @@ extension CostUsageStoreTests {
         let current = CostUsageStore(cacheRoot: fixture.root)
         let after = await current.readSnapshot()
         var expected = before
-        if ["ed735dc27ffa70d9", "99d920977063318a", "865cef15206ea5c0", "d35c9fb00bee059b"]
-            .contains(predecessorHash)
-        {
-            // These reports predate corrected pricing and coverage; native history still survives intact.
-            expected.metadata.previousReportPayload = nil
-        }
+        // Only predecessors from before the Fast pricing correction need report totals discarded.
+        if predecessorHash != "f98b2d0afc00443c" { expected.metadata.previousReportPayload = nil }
         #expect(after == expected)
         let legacy = try JSONDecoder().decode(
             CostUsageScanner.CodexBufferedFastLine.self, from: #require(after.bufferedLines.first).payload)
@@ -1131,7 +1128,10 @@ extension CostUsageStoreTests {
         #expect(resumed.resumeState == nil)
     }
 
-    @Test(arguments: ["8050a4faf4fddb96", "dd19ffa2dcfa8d47", "ed735dc27ffa70d9", "99d920977063318a"])
+    @Test(arguments: [
+        "8050a4faf4fddb96", "dd19ffa2dcfa8d47", "ed735dc27ffa70d9", "99d920977063318a",
+        "0ef5e15cc00e8e25", "5a57546c60494379", "e5909f60274b2c47",
+    ])
     func `retained report migration preserves compatible rows and clears stale payload`(
         predecessorHash: String) async throws
     {
@@ -1260,11 +1260,16 @@ extension CostUsageStoreTests {
         let metadata = Self.metadata()
         #expect(await predecessor.setMetadata(metadata))
 
+        let expected = {
+            var value = metadata
+            value.previousReportPayload = nil
+            return value
+        }()
         let stores = (0..<16).map { _ in CostUsageStore(cacheRoot: fixture.root) }
         await withTaskGroup(of: Void.self) { group in
             for store in stores {
                 group.addTask {
-                    #expect(await store.fetchMetadata() == metadata)
+                    #expect(await store.fetchMetadata() == expected)
                     #expect(await store.rebuildCount == 0)
                 }
             }
