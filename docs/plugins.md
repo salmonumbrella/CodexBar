@@ -27,6 +27,16 @@ built-in provider behavior.
 
 ## Menu-bar percentage
 
+With merged icons and **Current selection**, plugins use the shared menu-bar layout renderer. A plugin without a
+saved override inherits the global layout, including token order, separators, window-specific percentages, reset
+countdowns and conditional branches. Existing plugin overrides are preserved exactly: a saved percentage-only
+layout from 0.82.0 remains percentage-only. Removing an override restores global inheritance.
+
+Window titles, named extra windows and reset descriptions come from the plugin's own snapshot. Reset-only changes
+redraw the layout, and countdowns update when their displayed text changes. Branding never changes the provider
+identity or borrows another provider's window or account data. Tokens for data the plugin does not supply remain
+unavailable; prepaid balances are not enabled by this layout integration.
+
 In **Settings → Plugins**, each installed plugin has a **Menu bar metric** picker. **Auto** keeps the existing default:
 the most-used reported seven-day window, otherwise the first available primary, secondary, tertiary, or extra window.
 Choose **Primary**, **Secondary**, **Tertiary**, or a named extra window to use that quota for both the Icon & percent
@@ -457,7 +467,8 @@ Titles and references are limited to 120 characters. The summary is presentation
 It appears in merged **Icon & percent** mode with this plugin selected; clicking the group opens the same plugin menu.
 The app preserves the configured order, used/remaining preference, accessibility labels, template tinting and existing
 status-item placement. Meter-only mode keeps its existing rendering. A nonempty summary takes precedence over the
-saved **Menu bar metric** selection. Empty/omitted items restore the normal single indicator using that saved selection.
+plugin's resolved menu-bar layout and pauses that layout's countdown updates. Empty/omitted items restore the configured
+layout, including its saved **Menu bar metric** selection and countdowns.
 Scripts must omit the entire field on older hosts. Summary rendering caches unchanged frames and uses only bundled
 provider images (or manifest fallback), without new timers, status items or network requests.
 

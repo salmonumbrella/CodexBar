@@ -41,12 +41,14 @@ extension StatusItemController {
         for instanceID: ProviderInstanceID, showBrandPercent: Bool) -> String
     {
         guard let provider = instanceID.firstPartyProvider else {
-            return Self.pluginStoreIconObservationSignature(
+            let layout = showBrandPercent ? self.menuBarLayoutRenderData(for: instanceID, now: Date()).hashValue : 0
+            let signature = Self.pluginStoreIconObservationSignature(
                 for: instanceID,
                 snapshot: self.store.menuBarSnapshot(for: instanceID),
                 settings: self.settings,
                 hasError: self.store.errors[instanceID] != nil,
                 sourceHash: UserProviderPluginRegistry.plugin(for: instanceID)?.sourceHash ?? "")
+            return "\(signature)|layout=\(layout)"
         }
         let snapshot = self.menuBarUsageSource(for: provider).snapshot
         let style = self.store.style(for: provider)

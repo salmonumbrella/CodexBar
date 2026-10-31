@@ -876,6 +876,71 @@ struct UserProviderPluginTests {
 
 extension UserProviderPluginTests {
     @MainActor
+    @Test
+    func `plugin layout renders reset tokens and observes reset only refreshes`() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        _ = try fixture.write(name: "layout.js", source: Self.menuPlugin(id: "layout-meter", name: "Layout Meter"))
+        let plugin = try #require(UserProviderPluginRegistry.refresh(
+            loader: fixture.loader(transport: RecordingTransport(responseJSON: "{}"))).first?.plugin)
+        let (controller, store, settings) = Self.makePluginMenuController(
+            suiteName: "UserProviderPluginTests.layout",
+            selectedPluginID: plugin.manifest.id,
+            enabledPluginIDs: [plugin.manifest.id],
+            approvalStore: fixture.approvals)
+        defer { controller.releaseStatusItemsForTesting() }
+        settings.menuBarShowsBrandIconWithPercent = true
+        settings.usageBarsShowUsed = true
+        settings.setMenuBarLayout(MenuBarLayout(lines: [[
+            .providerName, .space, .percent(window: .session), .separatorDot, .windowResetCountdown(window: .session),
+        ]]), for: nil)
+        let now = Date()
+        func snapshot(
+            reset: Date,
+            icon: UsageProvider? = nil,
+            items: [ProviderMenuBarItem] = []) -> UsageSnapshot
+        {
+            UsageSnapshot(
+                primary: RateWindow(usedPercent: 37, windowMinutes: 300, resetsAt: reset, resetDescription: nil),
+                secondary: nil,
+                iconProvider: icon,
+                menuBarItems: items,
+                updatedAt: now)
+        }
+        store.snapshots[plugin.manifest.id] = snapshot(reset: now.addingTimeInterval(3650))
+        controller.updateIcons()
+        let button = try #require(controller.statusItem.button)
+        #expect(button.accessibilityTitle()?.contains("Layout Meter") == true)
+        #expect(button.accessibilityTitle()?.contains("37%") == true)
+        #expect(button.accessibilityTitle()?.contains("1h") == true)
+        #expect(controller._test_isMenuBarCountdownRefreshScheduled())
+        let before = controller.storeIconObservationSignature()
+        store.snapshots[plugin.manifest.id] = snapshot(reset: now.addingTimeInterval(7250))
+        #expect(controller.storeIconObservationSignature() != before)
+        controller.updateIcons()
+        #expect(button.accessibilityTitle()?.contains("2h") == true)
+        let unbranded = controller.menuBarLayoutRenderData(for: plugin.manifest.id, now: now)
+        store.snapshots[plugin.manifest.id] = snapshot(reset: now.addingTimeInterval(7250), icon: .codex)
+        let branded = controller.menuBarLayoutRenderData(for: plugin.manifest.id, now: now)
+        #expect(branded.iconKey != unbranded.iconKey)
+        #expect(branded.provider == plugin.manifest.id)
+        #expect(branded.providerName == "Layout Meter")
+
+        store.snapshots[plugin.manifest.id] = try snapshot(
+            reset: now.addingTimeInterval(7250),
+            items: [ProviderMenuBarItem(title: "Summary")])
+        controller.updateIcons()
+        #expect(button.accessibilityTitle()?.contains("Summary") == true)
+        #expect(controller._test_isMenuBarCountdownRefreshScheduled() == false)
+        store.snapshots[plugin.manifest.id] = snapshot(reset: now.addingTimeInterval(7250))
+        controller.updateIcons()
+        #expect(button.accessibilityTitle()?.contains("Layout Meter") == true)
+        #expect(controller._test_isMenuBarCountdownRefreshScheduled())
+    }
+}
+
+extension UserProviderPluginTests {
+    @MainActor
     @Test(arguments: [nil, true, false] as [Bool?])
     func `plugin placement respects default explicit override and unmerged menus`(topLevel: Bool?) throws {
         let fixture = try Fixture()
@@ -1004,7 +1069,7 @@ extension UserProviderPluginTests {
 
     @MainActor
     @Test
-    func `plugin summary redraws a nonleading quota and restores the single display`() async throws {
+    func `plugin summary redraws a nonleading quota and restores the configured layout`() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         _ = try fixture.write(name: "summary.js", source: Self.menuPlugin(id: "summary-meter", name: "Summary"))
@@ -1020,6 +1085,9 @@ extension UserProviderPluginTests {
         settings.mergedMenuLastSelectedWasOverview = false
         settings.menuBarShowsBrandIconWithPercent = true
         settings.usageBarsShowUsed = false
+        settings.setMenuBarLayout(MenuBarLayout(lines: [[
+            .providerName, .space, .percent(window: .automatic),
+        ]]), for: nil)
         let items = try [
             ProviderMenuBarItem(title: "Claude", iconProvider: .claude, windowID: "claude"),
             ProviderMenuBarItem(title: "Codex", iconProvider: .codex, windowID: "codex"),
@@ -1044,7 +1112,9 @@ extension UserProviderPluginTests {
         }
         #expect(controller.lastObservedStoreIconWorkSignature != grouped)
         #expect(button.accessibilityTitle()?.contains("Codex") != true)
-        #expect(controller.statusItem.length == NSStatusItem.variableLength)
+        #expect(button.accessibilityTitle()?.contains("Summary") == true)
+        #expect(button.accessibilityTitle()?.contains(UsageFormatter.percentString(20)) == true)
+        #expect(controller.statusItem.length > 0)
     }
 
     @MainActor
@@ -1352,125 +1422,8 @@ extension UserProviderPluginTests {
     }
 }
 
-private final class RecordingTransport: ProviderHTTPTransport, @unchecked Sendable {
-    private let lock = NSLock()
-    private let responseJSON: String
-    private let responseHeaders: [String: String]
-    private var requests: [URLRequest] = []
-
-    init(responseJSON: String, responseHeaders: [String: String] = ["Content-Type": "application/json"]) {
-        self.responseJSON = responseJSON
-        self.responseHeaders = responseHeaders
-    }
-
-    var requestCount: Int {
-        self.lock.withLock { self.requests.count }
-    }
-
-    var lastRequest: URLRequest? {
-        self.lock.withLock { self.requests.last }
-    }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        self.lock.withLock { self.requests.append(request) }
-        let response = try HTTPURLResponse(
-            url: #require(request.url),
-            statusCode: 200,
-            httpVersion: nil,
-            headerFields: self.responseHeaders)!
-        return (Data(self.responseJSON.utf8), response)
-    }
-}
-
-private actor ResolverAccess {
-    private(set) var calls = 0
-
-    func record(provider _: UsageProvider, domain _: String) {
-        self.calls += 1
-    }
-}
-
-private actor RetryDelayRecorder {
-    private(set) var values: [TimeInterval] = []
-
-    func record(_ seconds: TimeInterval) {
-        self.values.append(seconds)
-    }
-}
-
-private actor SequenceResponseTransport: ProviderHTTPTransport {
-    private var responses: [(status: Int, body: String, headers: [String: String])]
-    private(set) var requestCount = 0
-
-    init(responses: [(Int, String, [String: String])]) {
-        self.responses = responses
-    }
-
-    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        self.requestCount += 1
-        let response = self.responses.removeFirst()
-        var headers = response.headers
-        headers["Content-Type"] = "application/json"
-        let httpResponse = try HTTPURLResponse(
-            url: #require(request.url),
-            statusCode: response.status,
-            httpVersion: nil,
-            headerFields: headers)!
-        return (Data(response.body.utf8), httpResponse)
-    }
-}
-
 @MainActor
-private final class PluginMenuProofCanvas: NSView {
-    override var isFlipped: Bool {
-        true
-    }
-
-    override var fittingSize: NSSize {
-        self.frame.size
-    }
-}
-
-private struct Fixture {
-    let root: URL
-    let providers: URL
-    let cache: URL
-    let history: URL
-    let approvals: ProviderPluginApprovalStore
-
-    init() throws {
-        self.root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("UserProviderPluginTests-\(UUID().uuidString)", isDirectory: true)
-        self.providers = self.root.appendingPathComponent("providers", isDirectory: true)
-        self.cache = self.root.appendingPathComponent("cache", isDirectory: true)
-        self.history = self.root.appendingPathComponent("history", isDirectory: true)
-        self.approvals = ProviderPluginApprovalStore(fileURL: self.root.appendingPathComponent("approvals.json"))
-        try FileManager.default.createDirectory(at: self.providers, withIntermediateDirectories: true)
-    }
-
-    func write(name: String, source: String) throws -> URL {
-        let url = self.providers.appendingPathComponent(name)
-        try Data(source.utf8).write(to: url, options: .atomic)
-        return url
-    }
-
-    func loader(transport: any ProviderHTTPTransport) -> UserProviderPluginLoader {
-        UserProviderPluginLoader(
-            providersDirectory: self.providers,
-            cacheDirectory: self.cache,
-            transport: transport)
-    }
-
-    func remove() {
-        UserProviderPluginRegistry.refresh(loader: UserProviderPluginLoader(
-            providersDirectory: self.root.appendingPathComponent("empty"),
-            cacheDirectory: self.cache))
-        try? FileManager.default.removeItem(at: self.root)
-    }
-}
-
 extension UserProviderPluginTests {
-    @MainActor
     @Test
     func `top level plugin becomes a stable provider switcher segment`() throws {
         let fixture = try Fixture()
