@@ -97,7 +97,10 @@ struct MachineSpendTests {
             machineLoader: { hosts, days, _, _ in await pending.load(hosts, days: days) },
             nowProvider: { Date(timeIntervalSince1970: 172_800) })
         controller.selectPeriod(.rolling(days: 2))
-        controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: true)
+        let cancelledCompletion = AsyncStream<Void>.makeStream()
+        MachineTaskCompletion.$token.withValue(MachineTaskCompletion.Token(cancelledCompletion.continuation)) {
+            controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: true)
+        }
         while await pending.calls.isEmpty {
             await Task.yield()
         }
@@ -106,17 +109,16 @@ struct MachineSpendTests {
         #expect(controller.machineWindow?.lowerBound == Date(timeIntervalSince1970: 86400))
         controller.cancelMachineSpend()
         await pending.finish()
-        for _ in 0..<10 {
-            await Task.yield()
-        }
+        for await _ in cancelledCompletion.stream {}
         #expect(controller.machineResult == nil && !controller.machineRunning)
         controller.runMachineSpend(hosts: ["disabled"], eligible: false, localPartial: false)
         #expect(!controller.machineRunning && controller.machineWindow == nil)
-        for _ in 0..<10 {
-            await Task.yield()
-        }
+
         #expect(await pending.calls.count == 1)
-        controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: true)
+        let stoppedCompletion = AsyncStream<Void>.makeStream()
+        MachineTaskCompletion.$token.withValue(MachineTaskCompletion.Token(stoppedCompletion.continuation)) {
+            controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: true)
+        }
         while await pending.calls.count < 2 {
             await Task.yield()
         }
@@ -124,9 +126,7 @@ struct MachineSpendTests {
         controller.stop()
         #expect(!controller.machineRunning && controller.machineWindow == nil)
         await pending.finish()
-        for _ in 0..<10 {
-            await Task.yield()
-        }
+        for await _ in stoppedCompletion.stream {}
         #expect(controller.machineResult == nil)
     }
 }
@@ -151,5 +151,21 @@ private actor PendingMachineCollection {
             allSourcesAvailable: false,
             partial: true))
         self.continuation = nil
+    }
+}
+
+private enum MachineTaskCompletion {
+    @TaskLocal static var token: Token?
+
+    final class Token: Sendable {
+        let continuation: AsyncStream<Void>.Continuation
+
+        init(_ continuation: AsyncStream<Void>.Continuation) {
+            self.continuation = continuation
+        }
+
+        deinit {
+            self.continuation.finish()
+        }
     }
 }
