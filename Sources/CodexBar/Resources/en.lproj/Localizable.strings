@@ -2799,6 +2799,10 @@
 "Rewards" = "Rewards";
 "Reward expiry" = "Reward expiry";
 "By machine" = "By machine";
+"Across machines" = "Across machines";
+"Today (UTC): %@" = "Today (UTC): %@";
+"As of %@ UTC · %d/%d sources" = "As of %@ UTC · %d/%d sources";
+"Price unknown" = "Price unknown";
 "Machine %d" = "Machine %d";
 "Codex identified requests" = "Codex identified requests";
 "Shared requests count once." = "Shared requests count once.";

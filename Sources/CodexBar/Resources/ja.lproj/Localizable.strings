@@ -2794,6 +2794,10 @@
 "Rewards" = "報酬";
 "Reward expiry" = "報酬の有効期限";
 "By machine" = "マシン別";
+"Across machines" = "マシン全体";
+"Today (UTC): %@" = "今日（UTC）: %@";
+"As of %@ UTC · %d/%d sources" = "%@ UTC 時点 · %d/%d ソース";
+"Price unknown" = "料金不明";
 "Machine %d" = "マシン %d";
 "Codex identified requests" = "識別済みのCodexリクエスト";
 "Shared requests count once." = "共有リクエストは1回だけ数えます。";

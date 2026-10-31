@@ -2796,6 +2796,10 @@
 "Rewards" = "Hadiah";
 "Reward expiry" = "Kedaluwarsa hadiah";
 "By machine" = "Menurut mesin";
+"Across machines" = "Di semua mesin";
+"Today (UTC): %@" = "Hari ini (UTC): %@";
+"As of %@ UTC · %d/%d sources" = "Per %@ UTC · %d/%d sumber";
+"Price unknown" = "Harga tidak diketahui";
 "Machine %d" = "Mesin %d";
 "Codex identified requests" = "Permintaan Codex teridentifikasi";
 "Shared requests count once." = "Permintaan bersama dihitung sekali.";

@@ -2792,6 +2792,10 @@
 "Rewards" = "Prämien";
 "Reward expiry" = "Ablauf der Prämien";
 "By machine" = "Nach Rechner";
+"Across machines" = "Rechnerübergreifend";
+"Today (UTC): %@" = "Heute (UTC): %@";
+"As of %@ UTC · %d/%d sources" = "Stand %@ UTC · %d/%d Quellen";
+"Price unknown" = "Preis unbekannt";
 "Machine %d" = "Rechner %d";
 "Codex identified requests" = "Identifizierte Codex-Anfragen";
 "Shared requests count once." = "Gemeinsame Anfragen zählen einmal.";

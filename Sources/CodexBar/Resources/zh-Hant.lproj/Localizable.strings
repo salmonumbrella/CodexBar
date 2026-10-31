@@ -2772,6 +2772,10 @@
 "Rewards" = "獎勵";
 "Reward expiry" = "獎勵到期日期";
 "By machine" = "依機器";
+"Across machines" = "跨機器";
+"Today (UTC): %@" = "今天（UTC）：%@";
+"As of %@ UTC · %d/%d sources" = "截至 %@ UTC · %d/%d 個來源";
+"Price unknown" = "價格未知";
 "Machine %d" = "機器 %d";
 "Codex identified requests" = "已識別的 Codex 請求";
 "Shared requests count once." = "共用請求只計算一次。";

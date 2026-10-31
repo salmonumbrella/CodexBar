@@ -2797,6 +2797,10 @@
 "Rewards" = "Ödüller";
 "Reward expiry" = "Ödüllerin son kullanma tarihi";
 "By machine" = "Makineye göre";
+"Across machines" = "Tüm makinelerde";
+"Today (UTC): %@" = "Bugün (UTC): %@";
+"As of %@ UTC · %d/%d sources" = "%@ UTC itibarıyla · %d/%d kaynak";
+"Price unknown" = "Fiyat bilinmiyor";
 "Machine %d" = "Makine %d";
 "Codex identified requests" = "Tanımlanmış Codex istekleri";
 "Shared requests count once." = "Paylaşılan istekler bir kez sayılır.";

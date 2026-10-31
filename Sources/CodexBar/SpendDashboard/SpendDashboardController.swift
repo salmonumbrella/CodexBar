@@ -1989,8 +1989,9 @@ extension SpendDashboardController {
         let time = String(format: "%02d:%02d", minutes / 60, minutes % 60)
         let available = result.reports.filter { $0.ledger != nil }.count
         var coverage = L("As of %@ UTC · %d/%d sources", time, available, result.reports.count)
-        if result.partial || subtotal.partial || localPartial { coverage += " · \(L("Partial coverage"))" }
-        return [L("Across machines · Codex identified only"), L("Today (UTC): %@", usage), coverage]
+        if result.partial || subtotal.partial || localPartial { coverage += " · \(L("codex_workspaces_partial_data"))" }
+        let scope = "\(L("Across machines")) · \(L("Codex identified requests"))"
+        return [scope, L("Today (UTC): %@", usage), coverage]
     }
 
     func cancelMachineSpend() {

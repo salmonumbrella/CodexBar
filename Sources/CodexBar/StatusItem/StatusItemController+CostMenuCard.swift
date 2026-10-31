@@ -113,7 +113,7 @@ extension StatusItemController {
                 menu.addItem(self.makeCostMenuRowItem(
                     CostMenuCardRowView(
                         title: L("Across machines"),
-                        detailLines: [L("Codex identified only")] + lines.dropFirst(),
+                        detailLines: [L("Codex identified requests")] + lines.dropFirst(),
                         width: width),
                     tooltipLines: lines,
                     submenu: nil,
@@ -121,7 +121,10 @@ extension StatusItemController {
                     id: "menuCardMachineCost"))
             }
         }
-        let action = NSMenuItem(title: L("By machine…"), action: #selector(self.openMachineSpend), keyEquivalent: "")
+        let action = NSMenuItem(
+            title: "\(L("By machine"))…",
+            action: #selector(self.openMachineSpend),
+            keyEquivalent: "")
         action.target = self
         menu.addItem(action)
     }
@@ -180,7 +183,7 @@ extension StatusItemController {
         hasSubmenu: Bool,
         machineLines: [String] = []) -> [String]
     {
-        guard !hasSubmenu || !machineLines.isEmpty else { return [] }
+        guard !hasSubmenu else { return machineLines }
         let primaryLines = ([tokenUsage?.sessionLine].compactMap(\.self) + machineLines + [
             tokenUsage?.monthLine,
             tokenUsage?.meteredLine,

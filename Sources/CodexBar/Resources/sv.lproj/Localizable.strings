@@ -2793,6 +2793,10 @@
 "Rewards" = "Belöningar";
 "Reward expiry" = "Belöningarnas utgångsdatum";
 "By machine" = "Per dator";
+"Across machines" = "På alla datorer";
+"Today (UTC): %@" = "I dag (UTC): %@";
+"As of %@ UTC · %d/%d sources" = "Per %@ UTC · %d/%d källor";
+"Price unknown" = "Okänt pris";
 "Machine %d" = "Dator %d";
 "Codex identified requests" = "Identifierade Codex-anrop";
 "Shared requests count once." = "Delade anrop räknas en gång.";

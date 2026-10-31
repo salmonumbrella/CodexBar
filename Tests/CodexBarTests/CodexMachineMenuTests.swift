@@ -13,10 +13,10 @@ struct CodexMachineMenuTests {
         #expect(SpendDashboardController.machineCostMenuLines(
             result: result, localPartial: false, now: Date(timeIntervalSince1970: 1_728_086_400)).isEmpty)
         let lines = SpendDashboardController.machineCostMenuLines(result: result, localPartial: false, now: captured)
-        #expect(lines[0] == "Across machines · Codex identified only")
+        #expect(lines[0] == "Across machines · Codex identified requests")
         #expect(lines[1] == "Today (UTC): $4.20 · 110 tokens")
         #expect(lines[2].contains("00:00 UTC · 1/2 sources"))
-        #expect(lines[2].contains("Partial coverage"))
+        #expect(lines[2].contains("Partial data"))
     }
 
     @Test(arguments: [nil, 0.0])
@@ -116,17 +116,17 @@ private actor MachineMenuCollectionRecorder {
 
 extension CodexMachineMenuTests {
     @Test
-    func `ordinary Cost lines place machine summary after local Today and before local history`() {
+    func `Cost history submenu keeps local lines hidden while showing machine summary`() {
         let usage = UsageMenuCardView.Model.TokenUsageSection(
             sessionLine: "This Mac today",
             monthLine: "This Mac history",
             hintLine: nil,
             errorLine: nil,
             errorCopyText: nil)
-        let machine = ["Across machines · Codex identified only", "Today (UTC): $4.20", "As of 00:00 UTC"]
+        let machine = ["Across machines · Codex identified requests", "Today (UTC): $4.20", "As of 00:00 UTC"]
         #expect(StatusItemController.costMenuVisibleDetailLines(
             provider: .codex, tokenUsage: usage, hasSubmenu: true, machineLines: machine)
-            == ["This Mac today"] + machine + ["This Mac history"])
+            == machine)
     }
 }
 

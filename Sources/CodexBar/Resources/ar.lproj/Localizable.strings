@@ -2798,6 +2798,10 @@
 "Rewards" = "المكافآت";
 "Reward expiry" = "انتهاء صلاحية المكافآت";
 "By machine" = "حسب الجهاز";
+"Across machines" = "عبر الأجهزة";
+"Today (UTC): %@" = "اليوم (UTC): %@";
+"As of %@ UTC · %d/%d sources" = "حتى %@ UTC · المصادر: %d/%d";
+"Price unknown" = "السعر غير معروف";
 "Machine %d" = "الجهاز %d";
 "Codex identified requests" = "طلبات Codex المحددة";
 "Shared requests count once." = "تُحسب الطلبات المشتركة مرة واحدة.";
