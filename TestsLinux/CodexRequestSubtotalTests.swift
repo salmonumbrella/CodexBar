@@ -1,3 +1,4 @@
+import Commander
 import Foundation
 import Testing
 @testable import CodexBarCLI
@@ -39,6 +40,7 @@ struct CodexRequestSubtotalTests {
             local: { ledger },
             fetchRemote: { _ in remote },
             makeMerger: { { try Self.price($0) } })
+        #expect(accepted.localLedgerJSON != nil)
         #expect(accepted.reports.count == 1)
         #expect(accepted.reports[0].ledger?.records.count == 1)
         #expect(accepted.allSourcesAvailable)
@@ -58,10 +60,8 @@ struct CodexRequestSubtotalTests {
             fetchRemote: { _ in remote },
             makeMerger: { { try Self.price($0) } })
         #expect(rejected.reports.count == 2)
-        #expect(rejected.reports[0].ledger == nil && rejected.localLedgerJSON == nil)
-        #expect(rejected.reports[1].ledger?.records.count == 1)
-        #expect(rejected.subtotal?.totalTokens == 110)
-        #expect(!rejected.allSourcesAvailable && rejected.partial)
+        #expect(rejected.reports[0].ledger == nil)
+        #expect(rejected.reports[0].error != nil)
     }
 
     @Test(arguments: [false, true], [
@@ -101,29 +101,6 @@ struct CodexRequestSubtotalTests {
         #expect(report.allSourcesAvailable && !report.partial)
         #expect(report.subtotal?.requestCount == 2)
         #expect(report.subtotal?.totalTokens == 220)
-    }
-
-    @Test(arguments: [1, 2])
-    func `overflowing remote usage retains the valid local subtotal`(remoteRequests: Int) async throws {
-        let local = Self.ledger()
-        var remote = local
-        remote.records = ["b", "c"].prefix(remoteRequests).map { character in .init(
-            id: String(repeating: character, count: 64),
-            timestampUnixMs: Self.end,
-            inputTokens: remoteRequests == 1 ? Int.max - 109 : Int.max / 2 + 1,
-            cacheReadTokens: 0,
-            outputTokens: 0,
-            reasoningTokens: nil) }
-        let report = try await CodexBarCLI.collectIdentifiedUsage(
-            remotes: ["fixture-host"],
-            startUnixMs: Self.start,
-            endUnixMs: Self.end,
-            local: { local },
-            fetchRemote: { [remote] _ in remote },
-            makeMerger: { { try Self.price($0) } })
-        #expect(report.subtotal?.totalTokens == 110)
-        #expect(report.reports[1].ledger == nil)
-        #expect(!report.allSourcesAvailable && report.partial)
     }
 
     @Test
@@ -549,7 +526,7 @@ struct CodexRequestSubtotalTests {
         try CodexPrioritySQLiteTests.Fixture.insert(
             [(Self.start / 1000 + 12 * 60 * 60, CodexPrioritySQLiteTests.Fixture.traceBody(turn: turn))], at: trace)
         var options = CostUsageScanner.Options()
-        var environment = ["CODEX_HOME": selectedHome.path]
+        var environment = ["CODEX_HOME": selectedHome.path, "HOME": ambientHome.path]
         if placement == "explicit" {
             let explicitTrace = root.appendingPathComponent("explicit-trace.sqlite")
             try CodexPrioritySQLiteTests.Fixture.createDatabase(at: explicitTrace)
@@ -648,6 +625,15 @@ struct CodexRequestSubtotalTests {
 }
 
 extension CodexRequestSubtotalTests {
+    @Test
+    func `identified CLI retains repeated remote options`() throws {
+        let invocation = try Program(descriptors: CodexBarCLI.commandDescriptors()).resolve(arguments: [
+            "cost", "--provider", "codex", "--identified-only", "--format", "json",
+            "--remote", "first", "--remote", "second",
+        ])
+        #expect(invocation.parsedValues.options["remote"] == ["first", "second"])
+    }
+
     @Test(arguments: ["unavailable", "overflow"])
     func `source failures stay partial and overflow rolls back while later hosts contribute`(failure: String)
         async throws

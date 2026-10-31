@@ -111,16 +111,8 @@ public struct ClaudeRequestLedger: IdentifiedRequestLedger {
                         row.outputTokens = old.outputTokens
                         row.accountingState = old.accountingState
                     }
-                    if old.model != nil || row.model == nil, old.missingModel == row.missingModel,
-                       String(old.timestampUnixMs).utf8.count == String(row.timestampUnixMs).utf8.count,
-                       String(old.outputTokens).utf8.count == String(row.outputTokens).utf8.count,
-                       old.accountingState.rawValue.utf8.count == row.accountingState.rawValue.utf8.count
-                    {
-                        self.records[row.id] = row
-                        self.checkBounds()
-                        return
-                    }
                 }
+                if row == old { return }
                 self.retainedBytes -= self.size(old)
             }
             self.records[row.id] = row

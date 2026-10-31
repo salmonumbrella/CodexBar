@@ -707,7 +707,7 @@ extension CostUsageScanner {
                             scanIssue?()
                             continue
                         }
-                        guard stamp.size > 0 || scanIssue != nil else { continue }
+                        guard stamp.size > 0 else { continue }
                         inventory[url.path] = stamp
                     } catch {
                         guard let scanIssue else { throw error }

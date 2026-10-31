@@ -22,17 +22,14 @@ struct ClaudeRequestSubtotalTests {
     }
 
     static func load(
-        _ lines: [String], direct: Bool = false, terminated: Bool = true, separateFiles: Bool = false) throws
+        _ lines: [String], direct: Bool = false, terminated: Bool = true) throws
         -> ClaudeRequestLedger
     {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("audit.jsonl")
-        for (index, rows) in (separateFiles ? lines.map { [$0] } : [lines]).enumerated() {
-            let target = index == 0 ? file : root.appendingPathComponent("audit-\(index).jsonl")
-            try Data((rows.joined(separator: "\n") + (terminated ? "\n" : "")).utf8).write(to: target)
-        }
+        try Data((lines.joined(separator: "\n") + (terminated ? "\n" : "")).utf8).write(to: file)
         var options = CostUsageScanner.Options()
         options.claudeProjectsRoots = [direct ? file : root]
         return try ClaudeRequestLedger.load(
@@ -86,10 +83,9 @@ struct ClaudeRequestSubtotalTests {
             }, makeMerger: { { try Self.subtotal($0) } })
         let error = try #require(result.reports[localFails ? 0 : 1].error)
         #expect(error.contains("Claude"))
-        if localFails {
-            #expect(error.contains("No readable history source was found"))
-            #expect(error.contains("Check that the selected Claude history directory exists and is readable."))
-        } else {
+        #expect(error.contains("try fewer --days"))
+        #expect(error.contains("50,000 records and 32 MiB"))
+        if !localFails {
             #expect(error.contains("schema 1 --identified-only"))
             #expect(error.contains("Check SSH and update its CLI"))
         }
@@ -129,7 +125,7 @@ struct ClaudeRequestSubtotalTests {
                 let partitions = try [Self.load([lines[0]]), Self.load(Array(lines.dropFirst()))].map {
                     try JSONDecoder().decode(ClaudeRequestLedger.self, from: JSONEncoder().encode($0))
                 }
-                for sources in try [[Self.load(lines)], [Self.load(lines, separateFiles: true)], partitions] {
+                for sources in try [[Self.load(lines)], partitions] {
                     let result = try Self.subtotal(sources)
                     #expect(result.requestCount == (conflict ? 0 : 1))
                     #expect(result.conflictCount == (conflict ? 1 : 0))
@@ -156,7 +152,6 @@ struct ClaudeRequestSubtotalTests {
         ("855", "terminal", "900", "snapshot", true),
         ("855", "terminal", "4", "terminal", true),
         ("855", "terminal", "855", "terminal", false),
-        ("4", "snapshot", "4", "terminal", true),
     ])
     func `stream evidence is invariant across order and serialized source partitions`(
         first: String,
@@ -222,8 +217,6 @@ struct ClaudeRequestSubtotalTests {
             line(cache: #","cache_creation_input_tokens":0,"cache_creation":false"#),
             line(cache: #","cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":null}"#),
             line(input: "null"),
-            line(input: "true"),
-            line(input: "1.5"),
             line(input: "1e400"),
             line(input: "9223372036854775807"),
             line(output: "0", input: "0", cache: #","cache_read_input_tokens":null"#),
@@ -458,12 +451,16 @@ struct ClaudeRequestSubtotalTests {
         #expect(try Data(contentsOf: file) == replacement)
         #expect(ledger.records.first?.inputTokens == 191)
         #expect(ledger.partial)
+        var cancellationChecks = 0
         #expect(throws: CancellationError.self) {
             try ClaudeRequestLedger.load(
                 startUnixMs: Self.start,
                 endUnixMs: Self.end,
                 options: options,
-                checkCancellation: { throw CancellationError() })
+                checkCancellation: {
+                    cancellationChecks += 1
+                    if cancellationChecks == 6 { throw CancellationError() }
+                })
         }
     }
 

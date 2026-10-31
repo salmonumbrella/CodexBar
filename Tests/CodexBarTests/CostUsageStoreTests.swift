@@ -954,6 +954,7 @@ extension CostUsageStoreTests {
 
 extension CostUsageStoreTests {
     private static let testedPredecessorParserHashes = [
+        "6b42e42bafad1922", // 0.83.0 rows, checkpoints, and corrected reports survive shared Claude accounting.
         "f98b2d0afc00443c", // Corrected revision-14 reports survive the identified-pricing export change.
         "0ef5e15cc00e8e25", // Current main before resumed-tier and Fast pricing correction.
         "5a57546c60494379", // Home-scoped main before archived-row retention.
@@ -1098,7 +1099,9 @@ extension CostUsageStoreTests {
         let current = CostUsageStore(cacheRoot: fixture.root)
         let after = await current.readSnapshot()
         var expected = before
-        expected.metadata.previousReportPayload = after.metadata.previousReportPayload
+        if !["f98b2d0afc00443c", "6b42e42bafad1922"].contains(predecessorHash) {
+            expected.metadata.previousReportPayload = nil
+        }
         #expect(after == expected)
         let legacy = try JSONDecoder().decode(
             CostUsageScanner.CodexBufferedFastLine.self, from: #require(after.bufferedLines.first).payload)
@@ -1129,9 +1132,9 @@ extension CostUsageStoreTests {
 
     @Test(arguments: [
         "8050a4faf4fddb96", "dd19ffa2dcfa8d47", "ed735dc27ffa70d9", "99d920977063318a",
-        "0ef5e15cc00e8e25", "5a57546c60494379", "e5909f60274b2c47", "f98b2d0afc00443c",
+        "0ef5e15cc00e8e25", "5a57546c60494379", "e5909f60274b2c47",
     ])
-    func `retained report migration preserves compatible rows and only corrected payloads`(
+    func `retained report migration preserves compatible rows and clears stale payload`(
         predecessorHash: String) async throws
     {
         let fixture = try StoreFixture()
@@ -1150,7 +1153,7 @@ extension CostUsageStoreTests {
         #expect(await predecessor.mergeDayAggregates([aggregate]))
         #expect(await predecessor.setMetadata(Self.metadata()))
         var expected = await predecessor.readSnapshot()
-        expected.metadata.previousReportPayload = predecessorHash == "f98b2d0afc00443c" ? Data([2, 4, 6]) : nil
+        expected.metadata.previousReportPayload = nil
 
         let current = CostUsageStore(cacheRoot: fixture.root)
 

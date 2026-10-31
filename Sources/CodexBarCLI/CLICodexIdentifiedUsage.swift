@@ -180,12 +180,11 @@ extension CodexBarCLI {
                     source: sourceIndex == 0 ? "local" : "ssh",
                     collectedAt: nil,
                     ledger: nil,
-                    error: sourceIndex == 0
-                        ? Self.localIdentifiedUsageErrorMessage(providerName: Ledger.providerName, error: error)
-                        :
-                        "Remote \(Ledger.providerName.capitalized) identified usage is unavailable. " +
-                        "Check SSH and update its CLI " +
-                        "for schema \(Ledger.supportedSchemaVersion) --identified-only."))
+                    error: (sourceIndex == 0
+                        ? "Local native \(Ledger.providerName.capitalized) identified usage is unavailable. "
+                        : "Remote \(Ledger.providerName.capitalized) identified usage is unavailable. Check SSH " +
+                        "and update its CLI for schema \(Ledger.supportedSchemaVersion) --identified-only. ") +
+                        "For large histories, try fewer --days; exports are limited to 50,000 records and 32 MiB."))
             }
         }
         try Task.checkCancellation()
@@ -196,14 +195,5 @@ extension CodexBarCLI {
             allSourcesAvailable: available,
             partial: !available || (subtotal?.partial ?? false),
             localLedgerJSON: localLedgerJSON)
-    }
-
-    private static func localIdentifiedUsageErrorMessage(providerName: String, error: Error) -> String {
-        let generic = "Local native \(providerName.capitalized) identified usage is unavailable."
-        // Provider-specific by design: Claude's missing history source needs directory recovery guidance.
-        guard providerName == "claude", let remoteError = error as? RemoteCodexCostError,
-              case .unavailable = remoteError else { return generic }
-        return "\(generic) No readable history source was found. " +
-            "Check that the selected Claude history directory exists and is readable."
     }
 }
