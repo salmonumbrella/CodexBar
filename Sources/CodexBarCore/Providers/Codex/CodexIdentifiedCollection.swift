@@ -104,9 +104,11 @@ package enum CodexIdentifiedCollection {
             }
         }
         try Task.checkCancellation()
-        let todaySubtotal: CodexRequestSubtotal? = if includeSourceSubtotals, let merge {
+        let todaySubtotal: CodexRequestSubtotal? = if includeSourceSubtotals, let merge,
+                                                      let today = Self.window(days: 1, endUnixMs: endUnixMs)
+        {
             // Use the collection's pricing snapshot and full conflict decisions, without retaining another ledger.
-            try? merge(reports.compactMap(\.ledger), (endUnixMs / 86_400_000 * 86_400_000)...endUnixMs)
+            try? merge(reports.compactMap(\.ledger), today...endUnixMs)
         } else {
             nil
         }

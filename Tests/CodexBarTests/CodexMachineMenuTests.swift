@@ -66,35 +66,26 @@ struct CodexMachineMenuTests {
 }
 
 extension CodexMachineMenuTests {
-    @Test
-    func `presentation and summary reads stay passive until explicit collection`() async {
+    @Test(CodexCredentialFixtures())
+    func `menu presentation and summary reads stay passive until explicit collection`() async throws {
         let calls = MachineMenuCollectionRecorder()
-        let fixture = Self.result(cost: 4.2)
-        let initial = SpendDashboardConfiguration(
-            costUsageEnabled: true, providerIDs: ["codex"], codexAccountIdentities: [])
-        let controller = SpendDashboardController(
-            userDefaults: InMemoryUserDefaults(),
-            requestBuilder: { _ in
-                .init(
-                    configuration: initial,
-                    capturedInputs: [],
-                    unavailableSourceIDs: [],
-                    codexRequests: [],
-                    now: Date(timeIntervalSince1970: 1_728_000_100),
-                    force: false)
-            },
-            machineLoader: { _, _, _, _ in await calls.load(fixture) },
-            nowProvider: { Date(timeIntervalSince1970: 1_728_000_100) })
-        defer { controller.stop() }
-        controller.update(configuration: initial)
+        let fixture = try MachineMenuFixture(result: Self.result(cost: 4.2), recorder: calls)
+        defer { fixture.stop() }
+        fixture.dashboard.update(configuration: .init(
+            costUsageEnabled: true, providerIDs: ["codex"], codexAccountIdentities: []))
+        let menu = fixture.controller.makeMenu(for: .codex)
+        fixture.controller.populateMenu(menu, provider: .codex)
+        fixture.controller.menuWillOpen(menu)
+        defer { fixture.controller.menuDidClose(menu) }
+        #expect(menu.items.contains { $0.title == "By machine…" })
         for _ in 0..<5 {
-            controller.revealMachineSpend()
-            _ = controller.machineCostMenuLines()
+            fixture.dashboard.revealMachineSpend()
+            _ = fixture.dashboard.machineCostMenuLines()
         }
-        #expect(controller.machineExpanded && controller.machineRevealRevision == 5)
+        #expect(fixture.dashboard.machineExpanded && fixture.dashboard.machineRevealRevision == 5)
         #expect(await calls.loadCount == 0)
-        controller.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
-        while controller.machineRunning {
+        fixture.dashboard.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
+        while fixture.dashboard.machineRunning {
             await Task.yield()
         }
         #expect(await calls.loadCount == 1)
@@ -111,13 +102,16 @@ private actor MachineMenuCollectionRecorder {
 
 extension CodexMachineMenuTests {
     @Test(CodexCredentialFixtures())
-    func `disabled Codex hides the machine action and rejects an action built before disabling`() throws {
+    func `unavailable settings or disabled Codex rejects the machine action`() throws {
         let fixture = try MachineMenuFixture()
         defer { fixture.stop() }
         let model = try #require(fixture.controller.menuCardModel(for: .codex))
         let menu = NSMenu()
         fixture.controller.addCostMenuItems(to: menu, model: model, submenu: nil, width: 350)
         let action = try #require(menu.items.first { $0.action != nil })
+        _ = fixture.controller.perform(action.action)
+        #expect(!fixture.dashboard.machineExpanded)
+        #expect(fixture.dashboard.machineRevealRevision == 0)
         enableTestProviders([], settings: fixture.settings)
         #expect(!fixture.controller.showsMachineCostMenu(for: .codex))
         var opened = false
@@ -146,22 +140,13 @@ extension CodexMachineMenuTests {
             await Task.yield()
         }
         let menu = NSMenu()
-        let local = NSMenuItem(title: "Local content", action: nil, keyEquivalent: "")
-        local.representedObject = "localContent"
-        menu.addItem(local)
         if layout == "stacked" {
-            fixture.controller.addAccountAgnosticCostMenuSection(to: menu, context: .init(
-                currentProvider: .codex,
-                selectedProvider: .codex,
-                menuWidth: 350,
-                codexAccountDisplay: nil,
-                tokenAccountDisplay: nil,
-                openAIContext: .init(
-                    hasUsageBreakdown: false,
-                    hasCreditsHistory: false,
-                    hasCostHistory: false,
-                    canShowBuyCredits: false,
-                    hasOpenAIWebMenuItems: false)))
+            let display = MenuCardCodexAmbientCostTests.display(count: 2)
+            fixture.controller.addCodexAccountMenuCards(
+                display,
+                to: menu,
+                captureMenu: menu,
+                context: MenuCardCodexAmbientCostTests.context(display: display))
         } else {
             if layout == "sectioned" {
                 fixture.store._setTokenSnapshotForTesting(.init(
@@ -186,7 +171,7 @@ extension CodexMachineMenuTests {
         #expect(rows.count == 1)
         #expect(row.title == "Across machines")
         #expect(row.toolTip?.contains("Today (UTC): $4.20 · 110 tokens") == true)
-        let localID = layout == "stacked" ? "localContent" : layout == "merged" ? "menuCard" : "menuCardCost"
+        let localID = layout == "stacked" ? "menuCard-1" : layout == "merged" ? "menuCard" : "menuCardCost"
         let localIndex = try #require(menu.items.firstIndex { $0.representedObject as? String == localID })
         let rowIndex = try #require(menu.items.firstIndex { $0 === row })
         #expect(localIndex < rowIndex, "Menu rows: \(menu.items.map { $0.representedObject as? String ?? $0.title })")
@@ -198,7 +183,7 @@ extension CodexMachineMenuTests {
 
 extension CodexMachineMenuTests {
     @Test(CodexCredentialFixtures(), arguments: ["arrival", "rollover"])
-    func `cached Codex tab validates the current manual machine projection`(change: String) async throws {
+    func `ordinary and cached Codex menus validate the current manual machine projection`(change: String) async throws {
         let clock = LockIsolated(Date(timeIntervalSince1970: 1_728_000_100))
         let fixture = try MachineMenuFixture(result: Self.result(cost: 4.2), now: { clock.value })
         defer { fixture.stop() }
@@ -208,6 +193,10 @@ extension CodexMachineMenuTests {
                 await Task.yield()
             }
         }
+        let ordinaryMenu = fixture.controller.makeMenu(for: .codex)
+        fixture.controller.populateMenu(ordinaryMenu, provider: .codex)
+        fixture.controller.markMenuFresh(ordinaryMenu)
+        #expect(!fixture.controller.menuNeedsRefresh(ordinaryMenu))
         let menu = NSMenu()
         let content = NSMenu()
         fixture.controller.addMachineCostMenuItems(to: content, provider: .codex, width: 350)
@@ -234,12 +223,16 @@ extension CodexMachineMenuTests {
             clock.setValue(Date(timeIntervalSince1970: 1_728_086_400))
         }
         #expect(fixture.dashboard.machineCostMenuLines().isEmpty == (change == "rollover"))
+        #expect(fixture.controller.menuNeedsRefresh(ordinaryMenu))
         #expect(fixture.controller.reusableMergedSwitcherContent(
             for: .provider(.codex),
             in: menu,
             menuWidth: 350,
             codexAccountDisplay: nil,
             tokenAccountDisplay: nil) == nil)
+        fixture.controller.populateMenu(ordinaryMenu, provider: .codex)
+        fixture.controller.markMenuFresh(ordinaryMenu)
+        #expect(!fixture.controller.menuNeedsRefresh(ordinaryMenu))
         #expect(!fixture.dashboard.machineRunning)
     }
 }
@@ -253,11 +246,13 @@ private struct MachineMenuFixture {
 
     init(
         result: CodexIdentifiedResult? = nil,
+        recorder: MachineMenuCollectionRecorder? = nil,
         now: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 1_728_000_100) }) throws
     {
         let root = CodexCredentialFixtures.root
         let environment = [
             "HOME": root.path,
+            "CFFIXED_USER_HOME": root.path,
             "CODEX_HOME": root.appendingPathComponent("codex").path,
             "CLAUDE_CONFIG_DIR": root.appendingPathComponent("claude").path,
         ]
@@ -294,7 +289,7 @@ private struct MachineMenuFixture {
                 force: false) },
             machineLoader: { _, _, _, _ in
                 guard let result else { throw CancellationError() }
-                return result
+                return await recorder?.load(result) ?? result
             },
             nowProvider: now)
         store.sharedSpendDashboardControllerStorage = dashboard

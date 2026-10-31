@@ -1971,8 +1971,8 @@ extension SpendDashboardController {
     }
 
     static func machineCostMenuLines(result: CodexIdentifiedResult?, localPartial: Bool, now: Date) -> [String] {
-        let today = Int64(now.timeIntervalSince1970 * 1000) / 86_400_000 * 86_400_000
-        guard let result, let subtotal = result.todaySubtotal,
+        guard let today = CodexIdentifiedCollection.window(days: 1, endUnixMs: Int64(now.timeIntervalSince1970 * 1000)),
+              let result, let subtotal = result.todaySubtotal,
               let captured = result.reports.compactMap(\.ledger).first,
               captured.endUnixMs >= today,
               captured.endUnixMs < today + 86_400_000

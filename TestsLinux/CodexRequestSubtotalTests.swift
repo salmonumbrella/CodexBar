@@ -900,3 +900,64 @@ extension CodexRequestSubtotalTests {
 
     private static let nativeMetadata = #"{"type":"session_meta","payload":{"id":"fixture-session"}}"#
 }
+
+extension CodexRequestSubtotalTests {
+    @Test
+    func `today follows full conflict decisions and ignores yesterday unknown prices`() throws {
+        let today: Int64 = 172_800_000
+        var local = CodexRequestLedger(startUnixMs: 86_400_000, endUnixMs: today + 1000)
+        local.records = [
+            Self.accountingRow(timestamp: today, cached: 0, reasoning: nil),
+            Self.accountingRow(id: "b", model: nil, mode: nil, timestamp: today - 1, cached: 0, reasoning: nil),
+            Self.accountingRow(id: "c", timestamp: today, cached: 0, reasoning: nil),
+        ]
+        var remote = local
+        remote.records = [
+            Self.accountingRow(timestamp: today, cached: 0, reasoning: nil),
+            Self.accountingRow(id: "c", timestamp: today - 1, cached: 0, reasoning: nil),
+        ]
+        let subtotal = try CodexRequestLedger.merge(
+            [local, remote],
+            catalog: ModelsDevCatalog(providers: [:]),
+            customPricing: .empty,
+            recordWindow: today...(today + 1000))
+        #expect(subtotal.requestCount == 1)
+        #expect(subtotal.totalTokens == 110)
+        #expect(subtotal.conflictCount == 1)
+        #expect(subtotal.partial)
+        #expect(subtotal.costUSD != nil)
+    }
+}
+
+extension CodexRequestSubtotalTests {
+    @Test
+    func `app today excludes yesterday with missing sources and stays off the CLI wire`() async throws {
+        var fixture = CodexRequestLedger(startUnixMs: 86_400_000, endUnixMs: 172_801_000)
+        fixture.records = [
+            Self.accountingRow(id: "e", timestamp: 172_800_000, cached: 0, reasoning: nil),
+            Self.accountingRow(id: "f", timestamp: 172_799_999, cached: 0, reasoning: nil),
+        ]
+        let ledger = fixture
+        let app = try await CodexIdentifiedCollection.collect(
+            remotes: ["copy", "missing"],
+            startUnixMs: ledger.startUnixMs,
+            endUnixMs: ledger.endUnixMs,
+            includeSourceSubtotals: true,
+            local: { ledger },
+            fetchRemote: { host in
+                if host == "missing" { throw RemoteCodexCostError.unavailable }
+                return ledger
+            })
+        #expect(app.todaySubtotal?.requestCount == 1)
+        #expect(app.todaySubtotal?.totalTokens == 110)
+        let encoded = try #require(CodexIdentifiedCollection.encodeJSON(app, pretty: false))
+        #expect(!encoded.contains("todaySubtotal"))
+        let cli = try await CodexIdentifiedCollection.collect(
+            remotes: [],
+            startUnixMs: ledger.startUnixMs,
+            endUnixMs: ledger.endUnixMs,
+            local: { ledger },
+            fetchRemote: { _ in ledger })
+        #expect(cli.todaySubtotal == nil)
+    }
+}

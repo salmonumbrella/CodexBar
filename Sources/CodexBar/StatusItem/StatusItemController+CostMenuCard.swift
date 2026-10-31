@@ -131,11 +131,9 @@ extension StatusItemController {
 
     @objc private func openMachineSpend() {
         // Provider-specific by design: this action opens Codex's manual identified-request detail.
-        guard self.showsMachineCostMenu(for: .codex) else { return }
-        _ = self.closeOpenMenusFromShortcutIfNeeded()
+        guard self.showsMachineCostMenu(for: .codex), self.openSettings(pane: .usageSpend) else { return }
         SessionUsageNavigation.shared.request = nil
         self.store.sharedSpendDashboardController().revealMachineSpend()
-        self.settingsOpenHandler?(.usageSpend)
     }
 
     private static func makeNativeCostMenuCardItem(

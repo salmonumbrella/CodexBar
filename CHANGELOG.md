@@ -4,7 +4,7 @@
 
 ### Added
 
-- Codex Cost: open By machine on demand and show its session-only UTC-today identified subtotal with time and coverage.
+- Codex Cost: open By machine on demand and show its session-only UTC-today identified subtotal with time and coverage (#4868). Thanks @salmonumbrella!
 
 ## 0.83.0 — 2026-10-31
 

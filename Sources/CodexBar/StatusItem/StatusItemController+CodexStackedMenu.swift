@@ -102,7 +102,7 @@ extension StatusItemController {
         self.addCostMenuItems(
             to: menu,
             model: model,
-            submenu: self.makeCostHistorySubmenu(provider: provider, width: context.menuWidth),
+            submenu: sharedLocalCost ? self.makeCostHistorySubmenu(provider: provider, width: context.menuWidth) : nil,
             width: context.menuWidth,
             includeLocalCost: sharedLocalCost)
         menu.addItem(.separator())
