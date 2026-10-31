@@ -87,6 +87,7 @@ struct MachineSpendDetail: View {
             .contains { $0.homePath != ambient }
         self.controller.runMachineSpend(
             hosts: self.settings.costUsageHosts,
+            // Provider-specific by design: only Codex history has identified requests to collect per machine.
             eligible: SpendDashboardSource.costCapableProviders(store: self.store).contains(.codex),
             localPartial: partial)
     }
