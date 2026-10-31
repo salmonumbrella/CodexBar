@@ -746,7 +746,7 @@ extension StatusItemController {
 
         guard let model = self.menuCardModel(for: context.selectedProvider) else { return false }
         let renderedModel = self.menuCardRefreshMonitor.model(for: model.provider, fallback: model)
-        if context.openAIContext.hasOpenAIWebMenuItems || self.showsMachineCostMenu(for: context.currentProvider) ||
+        if context.openAIContext.hasOpenAIWebMenuItems ||
             self.requiresSectionedMenuForProviderDerivedCost(provider: context.currentProvider)
         {
             let webItems = OpenAIWebMenuItems(
@@ -771,6 +771,7 @@ extension StatusItemController {
             heightCacheScope: context.currentProvider.rawValue,
             heightCacheFingerprint: renderedModel.heightFingerprint(section: "card"),
             containsInteractiveControls: true))
+        self.addMachineCostMenuItems(to: menu, provider: context.currentProvider, width: context.menuWidth)
         self.addFleetAccountMenuCards(fleetProjection.additionalAccounts, to: menu, context: context)
         if self.addStorageMenuCardSection(to: menu, provider: context.currentProvider, width: context.menuWidth) {
             menu.addItem(.separator())

@@ -40,17 +40,15 @@ extension StatusItemController {
     func makeCostMenuCardItem(
         model: UsageMenuCardView.Model,
         submenu: NSMenu?,
-        width: CGFloat,
-        machineLines: [String] = []) -> NSMenuItem
+        width: CGFloat) -> NSMenuItem
     {
         let title = Self.costMenuTitleForProvider(model.provider)
         let tooltipLines = Self.costMenuTooltipLines(
-            provider: model.provider, tokenUsage: model.tokenUsage, machineLines: machineLines)
+            provider: model.provider, tokenUsage: model.tokenUsage)
         let visibleDetailLines = Self.costMenuVisibleDetailLines(
             provider: model.provider,
             tokenUsage: model.tokenUsage,
-            hasSubmenu: submenu != nil,
-            machineLines: machineLines)
+            hasSubmenu: submenu != nil)
         return self.makeCostMenuRowItem(
             CostMenuCardRowView(title: title, detailLines: visibleDetailLines, width: width),
             tooltipLines: tooltipLines,
@@ -89,7 +87,8 @@ extension StatusItemController {
     }
 
     func showsMachineCostMenu(for provider: UsageProvider) -> Bool {
-        provider == .codex && self.settings.costSummaryShowsSubmenu(for: provider)
+        provider == .codex && self.settings.costSummaryShowsSubmenu(for: provider) &&
+            SpendDashboardSource.costCapableProviders(store: self.store).contains(.codex)
     }
 
     func addCostMenuItems(
@@ -97,29 +96,28 @@ extension StatusItemController {
         model: UsageMenuCardView.Model,
         submenu: NSMenu?,
         width: CGFloat,
-        separateMachineScope: Bool = false)
+        includeLocalCost: Bool = true)
     {
-        let showsMachine = self.showsMachineCostMenu(for: model.provider)
-        let includeLocalCost = !separateMachineScope || self.store.tokenCostIsAccountAgnostic(for: model.provider)
-        let lines = showsMachine ? self.store.sharedSpendDashboardController().machineCostMenuLines() : []
-        if (includeLocalCost && model.tokenUsage != nil) || (!separateMachineScope && !lines.isEmpty) {
-            menu.addItem(self.makeCostMenuCardItem(
-                model: model, submenu: submenu, width: width, machineLines: separateMachineScope ? [] : lines))
+        if includeLocalCost, model.tokenUsage != nil {
+            menu.addItem(self.makeCostMenuCardItem(model: model, submenu: submenu, width: width))
         }
-        guard showsMachine else { return }
-        if separateMachineScope {
-            if menu.items.last?.isSeparatorItem != true { menu.addItem(.separator()) }
-            if !lines.isEmpty {
-                menu.addItem(self.makeCostMenuRowItem(
-                    CostMenuCardRowView(
-                        title: L("Across machines"),
-                        detailLines: [L("Codex identified requests")] + lines.dropFirst(),
-                        width: width),
-                    tooltipLines: lines,
-                    submenu: nil,
-                    provider: model.provider,
-                    id: "menuCardMachineCost"))
-            }
+        self.addMachineCostMenuItems(to: menu, provider: model.provider, width: width)
+    }
+
+    func addMachineCostMenuItems(to menu: NSMenu, provider: UsageProvider, width: CGFloat) {
+        guard self.showsMachineCostMenu(for: provider) else { return }
+        let lines = self.store.sharedSpendDashboardController().machineCostMenuLines()
+        if menu.items.last?.isSeparatorItem != true { menu.addItem(.separator()) }
+        if !lines.isEmpty {
+            menu.addItem(self.makeCostMenuRowItem(
+                CostMenuCardRowView(
+                    title: L("Across machines"),
+                    detailLines: [L("Codex identified requests")] + lines.dropFirst(),
+                    width: width),
+                tooltipLines: lines,
+                submenu: nil,
+                provider: provider,
+                id: "menuCardMachineCost"))
         }
         let action = NSMenuItem(
             title: "\(L("By machine"))…",
@@ -130,6 +128,7 @@ extension StatusItemController {
     }
 
     @objc private func openMachineSpend() {
+        guard self.showsMachineCostMenu(for: .codex) else { return }
         _ = self.closeOpenMenusFromShortcutIfNeeded()
         SessionUsageNavigation.shared.request = nil
         self.store.sharedSpendDashboardController().revealMachineSpend()
@@ -164,10 +163,10 @@ extension StatusItemController {
 
     static func costMenuTooltipLines(
         provider _: UsageProvider,
-        tokenUsage: UsageMenuCardView.Model.TokenUsageSection?,
-        machineLines: [String] = []) -> [String]
+        tokenUsage: UsageMenuCardView.Model.TokenUsageSection?) -> [String]
     {
-        let lines = [tokenUsage?.sessionLine].compactMap(\.self) + machineLines + [
+        let lines = [
+            tokenUsage?.sessionLine,
             tokenUsage?.monthLine,
             tokenUsage?.meteredLine,
         ]
@@ -180,11 +179,11 @@ extension StatusItemController {
     static func costMenuVisibleDetailLines(
         provider: UsageProvider,
         tokenUsage: UsageMenuCardView.Model.TokenUsageSection?,
-        hasSubmenu: Bool,
-        machineLines: [String] = []) -> [String]
+        hasSubmenu: Bool) -> [String]
     {
-        guard !hasSubmenu else { return machineLines }
-        let primaryLines = ([tokenUsage?.sessionLine].compactMap(\.self) + machineLines + [
+        guard !hasSubmenu else { return [] }
+        let primaryLines = ([
+            tokenUsage?.sessionLine,
             tokenUsage?.monthLine,
             tokenUsage?.meteredLine,
         ]

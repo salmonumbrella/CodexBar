@@ -214,10 +214,10 @@ model-generic token label while the rendered menu-bar prefix and accessibility l
 - Codex credits can add a separate “Buy Credits…” menu action.
 - Claude spend-only accounts use one Meter bar and a shared metric row with the used/remaining preference, spend/limit caption, inferred monthly reset, and optional pace. Accounts with quota windows keep the separate Extra usage section. Both follow the existing Extra usage visibility choice.
 - Codex OpenAI web extras: code review remaining and usage breakdown render when dashboard data is attached.
-- Codex Cost offers “By machine…” to open the manual Usage & Spend detail. After that detail collects, Cost can show
-  its in-memory UTC-today identified subtotal, original capture time and source coverage. Opening or hovering the menu
-  never collects; closing the detail, changing its sources, or restarting removes the amount. Unknown prices retain
-  tokens and say “Price unknown.” Stacked accounts show this once under “Across machines,” outside “This Mac.”
+- Enabled Codex Cost offers “By machine…” to open the manual Usage & Spend detail. After that detail collects, a
+  separate “Across machines” row follows local Cost content with the in-memory UTC-today identified subtotal, original
+  capture time and source coverage. Opening or hovering never collects; closing the detail, changing its host consent or
+  local-home coverage, or restarting removes the amount. Unknown prices retain tokens and say “Price unknown.”
 - Codex and Claude cost cards: a Recent windows list under the daily bars shows each quota window's
   range, cost, and tokens (Current window, Previous window, N windows ago), split at official and banked resets.
   Inferred boundaries are labeled estimated; incomplete local subtotals show ≥ and a partial-estimate note.

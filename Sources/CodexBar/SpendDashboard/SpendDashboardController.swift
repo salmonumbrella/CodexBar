@@ -1254,11 +1254,6 @@ final class SpendDashboardController {
 
     func update(configuration: SpendDashboardConfiguration, force: Bool = false) {
         self.refreshRetainedCodexDisplayNames(configuration.codexAccountDisplayNames)
-        if let previous = self.configuration,
-           previous.codexAccountIdentities != configuration.codexAccountIdentities
-        {
-            self.cancelMachineSpend()
-        }
         if force {
             self.configuration = configuration
             self.startLoad(configuration: configuration, phase: .forcing)

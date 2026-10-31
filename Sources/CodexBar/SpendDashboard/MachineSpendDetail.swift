@@ -65,6 +65,7 @@ struct MachineSpendDetail: View {
             if self.controller.machineExpanded { self.run() }
         }
         .onChange(of: self.settings.costUsageHosts) { _, _ in self.controller.cancelMachineSpend() }
+        .onChange(of: self.localPartial) { _, _ in self.controller.cancelMachineSpend() }
         .onDisappear { self.controller.machineExpanded = false; self.controller.cancelMachineSpend() }
     }
 
@@ -80,15 +81,18 @@ struct MachineSpendDetail: View {
         return self.settings.hidePersonalInfo ? L("Machine %d", index + 1) : host
     }
 
-    private func run() {
+    private var localPartial: Bool {
         let ambient = CodexHomeScope.ambientHomeURL(env: self.store.environmentBase).standardizedFileURL.path
-        let partial = SpendDashboardSource.codexHomes(settings: self.settings, store: self.store)
+        return SpendDashboardSource.codexHomes(settings: self.settings, store: self.store)
             .contains { $0.homePath != ambient }
+    }
+
+    private func run() {
         self.controller.runMachineSpend(
             hosts: self.settings.costUsageHosts,
             // Provider-specific by design: only Codex history has identified requests to collect per machine.
             eligible: SpendDashboardSource.costCapableProviders(store: self.store).contains(.codex),
-            localPartial: partial)
+            localPartial: self.localPartial)
     }
 
     private func row(_ name: String, subtotal: CodexRequestSubtotal?, hint: String? = nil, partial: Bool) -> some View {
