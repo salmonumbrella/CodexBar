@@ -17,11 +17,12 @@ struct CodexMachineMenuTests {
         #expect(lines[0] == "Across machines · Codex identified requests")
         #expect(lines[1] == "Today (UTC): $4.20 · 110 tokens")
         #expect(lines[2].contains("00:00 UTC · 1/2 sources"))
-        #expect(lines[2].contains("Partial data"))
+        #expect(!lines[2].contains("Partial data"))
         let prices: [Double?] = [nil, 0]
         for cost in prices {
             let lines = SpendDashboardController.machineCostMenuLines(
-                result: Self.result(cost: cost), localPartial: false, now: captured)
+                result: Self.result(cost: cost, partial: cost == nil), localPartial: cost != nil, now: captured)
+            #expect(lines[2].contains("Partial data"))
             #expect(lines[1] == (cost == nil
                     ? "Today (UTC): 110 tokens · Price unknown" : "Today (UTC): $0.00 · 110 tokens"))
         }
@@ -34,23 +35,14 @@ struct CodexMachineMenuTests {
             result: unavailable, localPartial: false, now: captured).isEmpty)
     }
 
-    private static func result(cost: Double?) -> CodexIdentifiedResult {
-        var ledger = CodexRequestLedger(startUnixMs: 1_727_913_600_000, endUnixMs: 1_728_000_001_000)
-        ledger.records = [.init(
-            id: String(repeating: "a", count: 64),
-            timestampUnixMs: 1_728_000_000_000,
-            inputTokens: 100,
-            cacheReadTokens: 0,
-            outputTokens: 10,
-            reasoningTokens: nil,
-            model: cost == nil ? nil : "gpt-5",
-            pricingMode: cost == nil ? nil : "standard")]
+    private static func result(cost: Double?, partial: Bool = false) -> CodexIdentifiedResult {
+        let ledger = CodexRequestLedger(startUnixMs: 1_727_913_600_000, endUnixMs: 1_728_000_001_000)
         let subtotal = CodexRequestSubtotal(
             totalTokens: 110,
             requestCount: 1,
             conflictCount: 0,
             excludedCount: 0,
-            partial: false,
+            partial: partial,
             costUSD: cost,
             unpricedRequestCount: cost == nil ? 1 : 0)
         return CodexIdentifiedResult(
@@ -60,7 +52,7 @@ struct CodexMachineMenuTests {
             ],
             subtotal: subtotal,
             allSourcesAvailable: false,
-            partial: true,
+            partial: false,
             todaySubtotal: subtotal)
     }
 }
@@ -77,11 +69,10 @@ extension CodexMachineMenuTests {
         fixture.controller.settingsOpenHandler = { _ in }
         for _ in 0..<5 {
             _ = fixture.controller.perform(action.action)
-            _ = fixture.dashboard.machineCostMenuLines()
         }
         fixture.controller.menuWillOpen(menu)
         defer { fixture.controller.menuDidClose(menu) }
-        #expect(fixture.dashboard.machineExpanded && fixture.dashboard.machineRevealRevision == 5)
+        #expect(!fixture.dashboard.machineRunning)
         #expect(await calls.loadCount == 0)
         fixture.dashboard.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
         while fixture.dashboard.machineRunning {
@@ -122,6 +113,10 @@ extension CodexMachineMenuTests {
         fixture.controller.addMachineCostMenuItems(to: disabledMenu, provider: .codex, width: 350)
         #expect(disabledMenu.items.isEmpty)
         enableTestProviders([.codex], settings: fixture.settings)
+        for _ in 0..<5 {
+            _ = fixture.controller.perform(action.action)
+        }
+        #expect(fixture.dashboard.machineExpanded && fixture.dashboard.machineRevealRevision == 5)
         fixture.settings.costSummaryDisplayStyle = .inlineSummary
         #expect(!fixture.controller.showsMachineCostMenu(for: .codex))
         fixture.settings.costSummaryDisplayStyle = .both
@@ -187,7 +182,7 @@ extension CodexMachineMenuTests {
         let fixture = try MachineMenuFixture(result: Self.result(cost: 4.2), now: { clock.value })
         defer { fixture.stop() }
         if change == "rollover" {
-            fixture.dashboard.runMachineSpend(hosts: [], eligible: true, localPartial: false)
+            fixture.dashboard.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
             while fixture.dashboard.machineRunning {
                 await Task.yield()
             }
@@ -214,7 +209,7 @@ extension CodexMachineMenuTests {
             codexAccountDisplay: nil,
             tokenAccountDisplay: nil) != nil)
         if change == "arrival" {
-            fixture.dashboard.runMachineSpend(hosts: [], eligible: true, localPartial: false)
+            fixture.dashboard.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
             while fixture.dashboard.machineRunning {
                 await Task.yield()
             }
@@ -232,7 +227,6 @@ extension CodexMachineMenuTests {
         fixture.controller.populateMenu(ordinaryMenu, provider: .codex)
         fixture.controller.markMenuFresh(ordinaryMenu)
         #expect(!fixture.controller.menuNeedsRefresh(ordinaryMenu))
-        #expect(!fixture.dashboard.machineRunning)
     }
 }
 
