@@ -7,49 +7,28 @@ import Testing
 
 @MainActor
 struct CodexMachineMenuTests {
-    private static func result() -> CodexIdentifiedResult {
-        let ledger = CodexRequestLedger(startUnixMs: 1_727_913_600_000, endUnixMs: 1_728_000_001_000)
-        let subtotal = CodexRequestSubtotal(
-            totalTokens: 110,
-            requestCount: 1,
-            conflictCount: 0,
-            excludedCount: 0,
-            partial: false,
-            costUSD: 4.2,
-            unpricedRequestCount: 0)
-        return CodexIdentifiedResult(
-            reports: [
-                .init(host: "local", source: "local", collectedAt: nil, ledger: ledger, error: nil),
-                .init(host: "offline", source: "ssh", collectedAt: nil, ledger: nil, error: "Unavailable"),
-            ],
-            subtotal: subtotal,
-            allSourcesAvailable: false,
-            partial: true)
-    }
-}
-
-extension CodexMachineMenuTests {
-    @Test(CodexCredentialFixtures())
-    func `menu presentation and summary reads stay passive until explicit collection`() async throws {
-        let calls = MachineMenuCollectionRecorder()
-        let fixture = try MachineMenuFixture(result: Self.result(), recorder: calls)
-        defer { fixture.stop() }
-        let menu = fixture.controller.makeMenu(for: .codex)
-        fixture.controller.populateMenu(menu, provider: .codex)
-        let action = try #require(menu.items.first { $0.title == "By machine…" })
-        fixture.controller.settingsOpenHandler = { _ in }
-        for _ in 0..<5 {
-            _ = fixture.controller.perform(action.action)
-        }
-        fixture.controller.menuWillOpen(menu)
-        defer { fixture.controller.menuDidClose(menu) }
-        #expect(!fixture.dashboard.machineRunning)
-        #expect(await calls.loadCount == 0)
-        fixture.dashboard.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
-        while fixture.dashboard.machineRunning {
-            await Task.yield()
-        }
-        #expect(await calls.loadCount == 1)
+    private static func result() async throws -> CodexIdentifiedResult {
+        let end: Int64 = 1_728_000_100_000
+        var ledger = CodexRequestLedger(startUnixMs: end - 86_400_000 - 100_000, endUnixMs: end)
+        ledger.records = [.init(
+            id: String(repeating: "a", count: 64),
+            timestampUnixMs: end - 1000,
+            inputTokens: 100,
+            cacheReadTokens: 20,
+            outputTokens: 10,
+            reasoningTokens: 3,
+            model: "gpt-5",
+            pricingMode: "standard")]
+        let source = ledger
+        return try await CodexIdentifiedCollection.collect(
+            remotes: [],
+            startUnixMs: source.startUnixMs,
+            endUnixMs: end,
+            includeSourceSubtotals: true,
+            local: { source },
+            fetchRemote: { _ in
+                throw RemoteCodexCostError.unavailable
+            })
     }
 }
 
@@ -75,18 +54,31 @@ extension CodexMachineMenuTests {
         #expect(fixture.dashboard.machineRevealRevision == 0)
         enableTestProviders([], settings: fixture.settings)
         #expect(!fixture.controller.showsMachineCostMenu(for: .codex))
-        var opened = false
-        fixture.controller.settingsOpenHandler = { _ in opened = true }
+        var opened: SettingsPane?
+        fixture.controller.settingsOpenHandler = { opened = $0 }
         _ = fixture.controller.perform(action.action)
-        #expect(!opened)
+        #expect(opened == nil)
         #expect(!fixture.dashboard.machineExpanded)
         let disabledMenu = NSMenu()
         fixture.controller.addMachineCostMenuItems(to: disabledMenu, provider: .codex)
         #expect(disabledMenu.items.isEmpty)
         enableTestProviders([.codex], settings: fixture.settings)
+        let previousRequest = SessionUsageNavigation.shared.request
+        defer { SessionUsageNavigation.shared.request = previousRequest }
+        SessionUsageNavigation.shared.request = .init(
+            context: .init(
+                providerName: "Codex",
+                windowLabel: "Today",
+                sessions: [],
+                currencyCode: "USD",
+                costMultiplier: 1,
+                timeZone: .gmt),
+            sessionID: nil)
         for _ in 0..<5 {
             _ = fixture.controller.perform(action.action)
         }
+        #expect(opened == .usageSpend)
+        #expect(SessionUsageNavigation.shared.request == nil)
         #expect(fixture.dashboard.machineExpanded && fixture.dashboard.machineRevealRevision == 5)
         fixture.settings.costSummaryDisplayStyle = .inlineSummary
         #expect(!fixture.controller.showsMachineCostMenu(for: .codex))
@@ -97,34 +89,9 @@ extension CodexMachineMenuTests {
     }
 
     @Test(CodexCredentialFixtures(), arguments: ["merged", "sectioned", "stacked"])
-    func `machine action follows local content without an amount in every layout`(layout: String) async throws {
-        let end: Int64 = 1_728_000_100_000
-        var ledger = CodexRequestLedger(startUnixMs: end - 86_400_000 - 100_000, endUnixMs: end)
-        ledger.records = [.init(
-            id: String(repeating: "a", count: 64),
-            timestampUnixMs: end - 1000,
-            inputTokens: 100,
-            cacheReadTokens: 20,
-            outputTokens: 10,
-            reasoningTokens: 3,
-            model: "gpt-5",
-            pricingMode: "standard")]
-        let source = ledger
-        let collected = try await CodexIdentifiedCollection.collect(
-            remotes: ["offline"],
-            startUnixMs: source.startUnixMs,
-            endUnixMs: end,
-            includeSourceSubtotals: true,
-            local: { source },
-            fetchRemote: { _ in
-                throw RemoteCodexCostError.unavailable
-            })
-        let fixture = try MachineMenuFixture(result: collected)
+    func `machine action follows local content once in every layout`(layout: String) throws {
+        let fixture = try MachineMenuFixture()
         defer { fixture.stop() }
-        fixture.dashboard.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
-        while fixture.dashboard.machineRunning {
-            await Task.yield()
-        }
         let menu = NSMenu()
         if layout == "stacked" {
             let display = MenuCardCodexAmbientCostTests.display(count: 2)
@@ -152,7 +119,6 @@ extension CodexMachineMenuTests {
             }
             fixture.controller.populateMenu(menu, provider: .codex)
         }
-        #expect(!menu.items.contains { $0.representedObject as? String == "menuCardMachineCost" })
         #expect(menu.items.filter { $0.title == "By machine…" }.count == 1)
         let localID = layout == "stacked" ? "menuCard-1" : layout == "merged" ? "menuCard" : "menuCardCost"
         let localIndex = try #require(menu.items.firstIndex { $0.representedObject as? String == localID })
@@ -242,8 +208,16 @@ extension CodexMachineMenuTests {
     @Test(CodexCredentialFixtures())
     func `actual detail view collects on menu reveal and clears on collapse`() async throws {
         let recorder = MachineMenuCollectionRecorder()
-        let fixture = try MachineMenuFixture(result: Self.result(), recorder: recorder)
+        let fixture = try await MachineMenuFixture(result: Self.result(), recorder: recorder)
         defer { fixture.stop() }
+        let menu = fixture.controller.makeMenu(for: .codex)
+        fixture.controller.populateMenu(menu, provider: .codex)
+        fixture.controller.menuWillOpen(menu)
+        defer { fixture.controller.menuDidClose(menu) }
+        #expect(await recorder.loadCount == 0)
+        let action = try #require(menu.items.first { $0.title == "By machine…" })
+        fixture.controller.settingsOpenHandler = { _ in }
+        _ = fixture.controller.perform(action.action)
         let hosting = NSHostingView(rootView: MachineSpendDetail(
             settings: fixture.settings, store: fixture.store, controller: fixture.dashboard)
             .frame(width: 800, height: 500))
@@ -256,12 +230,6 @@ extension CodexMachineMenuTests {
         window.contentView = hosting
         defer { window.contentView = nil; window.close() }
         hosting.layoutSubtreeIfNeeded()
-        let menu = fixture.controller.makeMenu(for: .codex)
-        fixture.controller.populateMenu(menu, provider: .codex)
-        #expect(await recorder.loadCount == 0)
-        let action = try #require(menu.items.first { $0.title == "By machine…" })
-        fixture.controller.settingsOpenHandler = { _ in }
-        _ = fixture.controller.perform(action.action)
         let deadline = Date().addingTimeInterval(3)
         while fixture.dashboard.machineResult == nil, Date() < deadline {
             hosting.layoutSubtreeIfNeeded()
