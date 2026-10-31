@@ -31,13 +31,13 @@ struct MachineSpendDetail: View {
                 .font(.caption)
                 if let result = self.controller.machineResult {
                     Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
-                        GridRow {
-                            Text(""); Text(L("Requests")); Text(L("Tokens")); Text(L("Cost"))
-                        }.fontWeight(.medium)
+                        GridRow { Text(""); Text(L("Requests")); Text(L("Tokens")); Text(L("Cost")) }
+                            .fontWeight(.medium)
                         ForEach(Array(result.reports.enumerated()), id: \.offset) { index, source in
                             self.row(
                                 index == 0 ? L("This Mac") : self.machineName(source.host),
                                 subtotal: source.subtotal,
+                                hint: source.error,
                                 partial: index == 0 && self.controller.machineLocalPartial)
                         }
                         Divider()
@@ -92,13 +92,13 @@ struct MachineSpendDetail: View {
             localPartial: partial)
     }
 
-    private func row(_ name: String, subtotal: CodexRequestSubtotal?, partial: Bool) -> some View {
+    private func row(_ name: String, subtotal: CodexRequestSubtotal?, hint: String? = nil, partial: Bool) -> some View {
         GridRow {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                if partial || subtotal?
-                    .partial ==
-                    true { Text(L("codex_workspaces_partial_data")).font(.caption).foregroundStyle(.secondary) }
+                if partial || subtotal?.partial == true || hint != nil {
+                    Text(hint ?? L("codex_workspaces_partial_data")).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Text(subtotal.map { codexBarLocalizedInteger($0.requestCount) } ?? "—")
             Text(subtotal.map { UsageFormatter.tokenCountString($0.totalTokens) } ?? "—")

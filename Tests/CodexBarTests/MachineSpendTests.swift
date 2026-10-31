@@ -37,6 +37,126 @@ struct MachineSpendTests {
         #expect(visible.contains(guidance), "Rejected input must show its existing actionable host-format guidance.")
     }
 
+    @Test
+    func `machine source rows show collector recovery guidance only after failure`() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let settings = testSettingsStore(
+            suiteName: #function,
+            userDefaults: InMemoryUserDefaults(),
+            config: testConfigWithAllProvidersDisabled())
+        enableTestProviders([.codex], settings: settings)
+        settings.costUsageEnabled = true
+        settings.hidePersonalInfo = false
+        settings.agentSessionsManualHosts = "fixture-host"
+        settings.costUsageHosts = ["fixture-host"]
+        settings.refreshFrequency = .manual
+        settings.statusChecksEnabled = false
+        let environment = ["HOME": root.path, "CODEX_HOME": root.appendingPathComponent("codex").path]
+        let store = UsageStore(
+            fetcher: UsageFetcher(environment: environment),
+            browserDetection: BrowserDetection(homeDirectory: root.path, cacheTTL: 0),
+            costUsageFetcher: CostUsageFetcher(cacheRoot: root.appendingPathComponent("cost")),
+            settings: settings,
+            historicalUsageHistoryStore: HistoricalUsageHistoryStore(fileURL: root.appendingPathComponent("history")),
+            planUtilizationHistoryStore: PlanUtilizationHistoryStore(directoryURL: nil),
+            startupBehavior: .testing,
+            environmentBase: environment,
+            pluginApprovalStore: ProviderPluginApprovalStore(fileURL: root.appendingPathComponent("approvals")),
+            widgetSnapshotURL: root.appendingPathComponent("widget"),
+            cliUsageCacheURL: root.appendingPathComponent("cli"),
+            widgetTimelineReloader: {})
+        store._test_providerRefreshOverride = { _ in Issue.record("Unexpected provider transport") }
+        store._test_widgetSnapshotSaveOverride = { _ in }
+        defer { store.stopSharedSpendDashboardPublication(); settings.configFileWatcher?.stop() }
+        var recovery: String?
+        for unavailable in [true, false] {
+            let controller = SpendDashboardController(
+                userDefaults: InMemoryUserDefaults(),
+                requestBuilder: { _ in
+                    SpendDashboardLoadRequest(
+                        configuration: .init(costUsageEnabled: false, providerIDs: [], codexAccountIdentities: []),
+                        capturedInputs: [],
+                        unavailableSourceIDs: [],
+                        codexRequests: [],
+                        now: Date(timeIntervalSince1970: 172_800),
+                        force: false)
+                },
+                machineLoader: { hosts, _, start, end in
+                    let ledger = CodexRequestLedger(startUnixMs: start, endUnixMs: end)
+                    return try await CodexIdentifiedCollection.collect(
+                        remotes: hosts,
+                        startUnixMs: start,
+                        endUnixMs: end,
+                        includeSourceSubtotals: true,
+                        local: { ledger },
+                        fetchRemote: { _ in
+                            if unavailable { throw RemoteCodexCostError.unavailable }
+                            return ledger
+                        })
+                },
+                nowProvider: { Date(timeIntervalSince1970: 172_800) })
+            controller.selectPeriod(.rolling(days: 2))
+            let hosting = NSHostingView(rootView: MachineSpendDetail(
+                settings: settings, store: store, controller: controller)
+                .environment(\.locale, Locale(identifier: "en_US"))
+                .environment(\.accessibilityEnabled, true)
+                .padding().frame(width: 800, height: 500))
+            let window = NSWindow(
+                contentRect: NSRect(x: -10000, y: -10000, width: 800, height: 500),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = hosting
+            defer { controller.stop(); window.contentView = nil; window.close() }
+            hosting.layoutSubtreeIfNeeded()
+            let disclosure = try #require(Self.disclosure(in: hosting))
+            disclosure.perform(#selector(NSAccessibilityProtocol.accessibilityPerformPress))
+            let deadline = Date().addingTimeInterval(2)
+            while controller.machineResult == nil, Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+                hosting.layoutSubtreeIfNeeded()
+            }
+            let result = try #require(controller.machineResult)
+            let source = try #require(result.reports.last)
+            try #require(source.host == "fixture-host")
+            let expected = unavailable ? try #require(source.error) : try #require(recovery)
+            let renderDeadline = Date().addingTimeInterval(1)
+            var text = MenuLayoutScreenshotRenderTests.accessibilityText(hosting)
+            while !text.contains(L("Shared requests count once.")), Date() < renderDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+                hosting.layoutSubtreeIfNeeded()
+                text = MenuLayoutScreenshotRenderTests.accessibilityText(hosting)
+            }
+            try #require(
+                text.contains("fixture-host") && text.contains(L("Shared requests count once.")),
+                Comment(rawValue: text))
+            if unavailable {
+                recovery = expected
+                try #require(text.contains(L("Unavailable")), Comment(rawValue: text))
+                #expect(text.contains(expected), "The failed source row must show its collector recovery guidance.")
+            } else {
+                #expect(source.error == nil)
+                #expect(!text.contains(expected))
+            }
+        }
+    }
+
+    private static func disclosure(in element: Any, depth: Int = 0) -> NSObject? {
+        guard depth < 30, let element = element as? NSObject else { return nil }
+        let role = #selector(NSAccessibilityProtocol.accessibilityRole)
+        if element.responds(to: role),
+           let value = element.perform(role)?.takeUnretainedValue() as? String,
+           value == NSAccessibility.Role.disclosureTriangle.rawValue
+        { return element }
+        let children = #selector(NSAccessibilityProtocol.accessibilityChildren)
+        guard element.responds(to: children),
+              let values = element.perform(children)?.takeUnretainedValue() as? [Any] else { return nil }
+        return values.lazy.compactMap { self.disclosure(in: $0, depth: depth + 1) }.first
+    }
+
     private static func hostEditor(settings: SettingsStore) -> (NSWindow, NSView) {
         _ = NSApplication.shared
         let hosting = NSHostingView(rootView: AgentSessionHostsEditor(settings: settings)
