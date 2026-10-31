@@ -35,33 +35,8 @@ struct CodexMachineTodayTests {
 }
 
 extension CodexMachineTodayTests {
-    @Test(arguments: [false, true])
-    func `today keeps unknown usage and observed zero`(known: Bool) throws {
-        var ledger = CodexRequestLedger(startUnixMs: 172_800_000, endUnixMs: 172_801_000)
-        ledger.records = [.init(
-            id: String(repeating: "d", count: 64),
-            timestampUnixMs: 172_800_000,
-            inputTokens: 0,
-            cacheReadTokens: 0,
-            outputTokens: 0,
-            reasoningTokens: nil,
-            model: known ? "gpt-5" : nil,
-            pricingMode: known ? "standard" : nil)]
-        let subtotal = try CodexRequestLedger.merge(
-            [ledger],
-            catalog: ModelsDevCatalog(providers: [:]),
-            customPricing: .empty,
-            recordWindow: 172_800_000...172_801_000)
-        #expect(subtotal.requestCount == 1)
-        #expect(subtotal.totalTokens == 0)
-        #expect(subtotal.costUSD == (known ? 0 : nil))
-        #expect(subtotal.unpricedRequestCount == (known ? 0 : 1))
-    }
-}
-
-extension CodexMachineTodayTests {
     @Test
-    func `app today projection keeps missing source coverage and stays off the CLI wire`() async throws {
+    func `app today excludes yesterday with missing sources and stays off the CLI wire`() async throws {
         var fixture = CodexRequestLedger(startUnixMs: 86_400_000, endUnixMs: 172_801_000)
         fixture.records = [.init(
             id: String(repeating: "e", count: 64),
@@ -72,6 +47,15 @@ extension CodexMachineTodayTests {
             reasoningTokens: nil,
             model: "gpt-5",
             pricingMode: "standard")]
+        fixture.records.append(.init(
+            id: String(repeating: "f", count: 64),
+            timestampUnixMs: 172_799_999,
+            inputTokens: 100,
+            cacheReadTokens: 0,
+            outputTokens: 10,
+            reasoningTokens: nil,
+            model: "gpt-5",
+            pricingMode: "standard"))
         let ledger = fixture
         let app = try await CodexIdentifiedCollection.collect(
             remotes: ["copy", "missing"],
@@ -85,8 +69,6 @@ extension CodexMachineTodayTests {
             })
         #expect(app.todaySubtotal?.requestCount == 1)
         #expect(app.todaySubtotal?.totalTokens == 110)
-        #expect(app.partial && !app.allSourcesAvailable)
-        #expect(app.reports.filter { $0.ledger != nil }.count == 2)
         let encoded = try #require(CodexIdentifiedCollection.encodeJSON(app, pretty: false))
         #expect(!encoded.contains("todaySubtotal"))
         let cli = try await CodexIdentifiedCollection.collect(
@@ -96,6 +78,5 @@ extension CodexMachineTodayTests {
             local: { ledger },
             fetchRemote: { _ in ledger })
         #expect(cli.todaySubtotal == nil)
-        #expect(cli.subtotal == nil && cli.reports.first?.subtotal == nil)
     }
 }

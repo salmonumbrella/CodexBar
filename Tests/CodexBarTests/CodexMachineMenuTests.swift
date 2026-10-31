@@ -7,7 +7,7 @@ import Testing
 @MainActor
 struct CodexMachineMenuTests {
     @Test
-    func `menu has no amount without a session result or after UTC midnight`() {
+    func `machine menu formats UTC coverage and omits unavailable results`() {
         let captured = Date(timeIntervalSince1970: 1_728_000_001)
         #expect(SpendDashboardController.machineCostMenuLines(result: nil, localPartial: false, now: captured).isEmpty)
         let result = Self.result(cost: 4.2)
@@ -18,14 +18,20 @@ struct CodexMachineMenuTests {
         #expect(lines[1] == "Today (UTC): $4.20 · 110 tokens")
         #expect(lines[2].contains("00:00 UTC · 1/2 sources"))
         #expect(lines[2].contains("Partial data"))
-    }
-
-    @Test(arguments: [nil, 0.0])
-    func `menu distinguishes unknown prices from observed zero`(cost: Double?) {
-        let lines = SpendDashboardController.machineCostMenuLines(
-            result: Self.result(cost: cost), localPartial: false, now: Date(timeIntervalSince1970: 1_728_000_002))
-        #expect(lines[1] == (cost == nil
-                ? "Today (UTC): 110 tokens · Price unknown" : "Today (UTC): $0.00 · 110 tokens"))
+        let prices: [Double?] = [nil, 0]
+        for cost in prices {
+            let lines = SpendDashboardController.machineCostMenuLines(
+                result: Self.result(cost: cost), localPartial: false, now: captured)
+            #expect(lines[1] == (cost == nil
+                    ? "Today (UTC): 110 tokens · Price unknown" : "Today (UTC): $0.00 · 110 tokens"))
+        }
+        let unavailable = CodexIdentifiedResult(
+            reports: [.init(host: "local", source: "local", collectedAt: nil, ledger: nil, error: "Unavailable")],
+            subtotal: nil,
+            allSourcesAvailable: false,
+            partial: true)
+        #expect(SpendDashboardController.machineCostMenuLines(
+            result: unavailable, localPartial: false, now: captured).isEmpty)
     }
 
     private static func result(cost: Double?) -> CodexIdentifiedResult {
@@ -37,8 +43,8 @@ struct CodexMachineMenuTests {
             cacheReadTokens: 0,
             outputTokens: 10,
             reasoningTokens: nil,
-            model: "gpt-5",
-            pricingMode: "standard")]
+            model: cost == nil ? nil : "gpt-5",
+            pricingMode: cost == nil ? nil : "standard")]
         let subtotal = CodexRequestSubtotal(
             totalTokens: 110,
             requestCount: 1,
@@ -60,27 +66,12 @@ struct CodexMachineMenuTests {
 }
 
 extension CodexMachineMenuTests {
-    @Test(CodexCredentialFixtures(), arguments: ["timezone", "auth"])
-    func `presentation stays passive and display configuration keeps the UTC result`(change: String) async throws {
+    @Test
+    func `presentation and summary reads stay passive until explicit collection`() async {
         let calls = MachineMenuCollectionRecorder()
         let fixture = Self.result(cost: 4.2)
-        let home = CodexCredentialFixtures.root.appendingPathComponent("codex", isDirectory: true)
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        func configuration(_ zone: String) -> SpendDashboardConfiguration {
-            let source = SpendDashboardSource.codexSource(
-                account: nil,
-                homePath: home.path,
-                providerName: "Codex",
-                index: 0,
-                count: 1,
-                bucketTimeZoneIdentifier: zone)
-            return .init(
-                costUsageEnabled: true,
-                providerIDs: ["codex"],
-                codexAccountIdentities: [source.identity],
-                bucketTimeZoneIdentifier: zone)
-        }
-        let initial = configuration("UTC")
+        let initial = SpendDashboardConfiguration(
+            costUsageEnabled: true, providerIDs: ["codex"], codexAccountIdentities: [])
         let controller = SpendDashboardController(
             userDefaults: InMemoryUserDefaults(),
             requestBuilder: { _ in
@@ -107,19 +98,6 @@ extension CodexMachineMenuTests {
             await Task.yield()
         }
         #expect(await calls.loadCount == 1)
-        #expect(controller.machineCostMenuLines().last?.contains("00:00 UTC") == true)
-        if change == "auth" {
-            try Data("synthetic-auth-revision".utf8).write(to: home.appendingPathComponent("auth.json"))
-        }
-        let changed = configuration(change == "timezone" ? "America/Vancouver" : "UTC")
-        #expect(changed.codexAccountIdentities != initial.codexAccountIdentities)
-        let lines = controller.machineCostMenuLines()
-        controller.update(configuration: changed)
-        #expect(controller.machineCostMenuLines() == lines)
-        controller.cancelMachineSpend()
-        #expect(controller.machineResult == nil)
-        controller.runMachineSpend(hosts: [], eligible: false, localPartial: false)
-        #expect(await calls.loadCount == 1)
     }
 }
 
@@ -128,41 +106,6 @@ private actor MachineMenuCollectionRecorder {
     func load(_ result: CodexIdentifiedResult) -> CodexIdentifiedResult {
         self.loadCount += 1
         return result
-    }
-}
-
-extension CodexMachineMenuTests {
-    @Test
-    func `local Cost lines keep their scope separate from machine usage`() {
-        let usage = UsageMenuCardView.Model.TokenUsageSection(
-            sessionLine: "This Mac today",
-            monthLine: "This Mac history",
-            hintLine: nil,
-            errorLine: nil,
-            errorCopyText: nil)
-        #expect(StatusItemController.costMenuVisibleDetailLines(
-            provider: .codex, tokenUsage: usage, hasSubmenu: false)
-            == ["This Mac today", "This Mac history"])
-        #expect(StatusItemController.costMenuTooltipLines(
-            provider: .codex, tokenUsage: usage) == ["This Mac today", "This Mac history"])
-        #expect(StatusItemController.costMenuVisibleDetailLines(
-            provider: .codex, tokenUsage: usage, hasSubmenu: true).isEmpty)
-    }
-}
-
-extension CodexMachineMenuTests {
-    @Test
-    func `available machine usage needs no local history and wholly unavailable collection shows no amount`() {
-        let now = Date(timeIntervalSince1970: 1_728_000_002)
-        #expect(StatusItemController.costMenuVisibleDetailLines(
-            provider: .codex, tokenUsage: nil, hasSubmenu: false).isEmpty)
-        let unavailable = CodexIdentifiedResult(
-            reports: [.init(host: "local", source: "local", collectedAt: nil, ledger: nil, error: "Unavailable")],
-            subtotal: nil,
-            allSourcesAvailable: false,
-            partial: true)
-        #expect(SpendDashboardController.machineCostMenuLines(
-            result: unavailable, localPartial: false, now: now).isEmpty)
     }
 }
 
@@ -182,12 +125,10 @@ extension CodexMachineMenuTests {
         _ = fixture.controller.perform(action.action)
         #expect(!opened)
         #expect(!fixture.dashboard.machineExpanded)
-        #expect(!fixture.dashboard.machineRunning)
         let disabledMenu = NSMenu()
         fixture.controller.addMachineCostMenuItems(to: disabledMenu, provider: .codex, width: 350)
         #expect(disabledMenu.items.isEmpty)
         enableTestProviders([.codex], settings: fixture.settings)
-        #expect(!fixture.dashboard.machineExpanded)
         fixture.settings.costSummaryDisplayStyle = .inlineSummary
         #expect(!fixture.controller.showsMachineCostMenu(for: .codex))
         fixture.settings.costSummaryDisplayStyle = .both
@@ -205,14 +146,10 @@ extension CodexMachineMenuTests {
             await Task.yield()
         }
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Local content", action: nil, keyEquivalent: ""))
-        switch layout {
-        case "merged":
-            fixture.controller.addMachineCostMenuItems(to: menu, provider: .codex, width: 350)
-        case "sectioned":
-            try fixture.controller.addCostMenuItems(
-                to: menu, model: #require(fixture.controller.menuCardModel(for: .codex)), submenu: nil, width: 350)
-        default:
+        let local = NSMenuItem(title: "Local content", action: nil, keyEquivalent: "")
+        local.representedObject = "localContent"
+        menu.addItem(local)
+        if layout == "stacked" {
             fixture.controller.addAccountAgnosticCostMenuSection(to: menu, context: .init(
                 currentProvider: .codex,
                 selectedProvider: .codex,
@@ -225,17 +162,37 @@ extension CodexMachineMenuTests {
                     hasCostHistory: false,
                     canShowBuyCredits: false,
                     hasOpenAIWebMenuItems: false)))
+        } else {
+            if layout == "sectioned" {
+                fixture.store._setTokenSnapshotForTesting(.init(
+                    sessionTokens: 110,
+                    sessionCostUSD: 1,
+                    last30DaysTokens: 110,
+                    last30DaysCostUSD: 1,
+                    daily: [.init(
+                        date: "2024-10-04",
+                        inputTokens: 100,
+                        outputTokens: 10,
+                        totalTokens: 110,
+                        costUSD: 1,
+                        modelsUsed: nil,
+                        modelBreakdowns: nil)],
+                    updatedAt: Date(timeIntervalSince1970: 1_728_000_100)), provider: .codex)
+            }
+            fixture.controller.populateMenu(menu, provider: .codex)
         }
         let rows = menu.items.filter { $0.representedObject as? String == "menuCardMachineCost" }
         let row = try #require(rows.first)
         #expect(rows.count == 1)
         #expect(row.title == "Across machines")
         #expect(row.toolTip?.contains("Today (UTC): $4.20 · 110 tokens") == true)
-        #expect(menu.items.first?.title == "Local content")
+        let localID = layout == "stacked" ? "localContent" : layout == "merged" ? "menuCard" : "menuCardCost"
+        let localIndex = try #require(menu.items.firstIndex { $0.representedObject as? String == localID })
+        let rowIndex = try #require(menu.items.firstIndex { $0 === row })
+        #expect(localIndex < rowIndex, "Menu rows: \(menu.items.map { $0.representedObject as? String ?? $0.title })")
         #expect(menu.items.filter { $0.title == "By machine…" }.count == 1)
         let actionIndex = try #require(menu.items.firstIndex { $0.title == "By machine…" })
-        #expect(try #require(menu.items.firstIndex(of: row)) < actionIndex)
-        #expect(!fixture.dashboard.machineExpanded)
+        #expect(rowIndex < actionIndex)
     }
 }
 

@@ -125,6 +125,7 @@ extension StatusItemController {
             action: #selector(self.openMachineSpend),
             keyEquivalent: "")
         action.target = self
+        action.representedObject = "machineCostAction"
         menu.addItem(action)
     }
 
