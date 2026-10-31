@@ -71,17 +71,16 @@ extension CodexMachineMenuTests {
         let calls = MachineMenuCollectionRecorder()
         let fixture = try MachineMenuFixture(result: Self.result(cost: 4.2), recorder: calls)
         defer { fixture.stop() }
-        fixture.dashboard.update(configuration: .init(
-            costUsageEnabled: true, providerIDs: ["codex"], codexAccountIdentities: []))
         let menu = fixture.controller.makeMenu(for: .codex)
         fixture.controller.populateMenu(menu, provider: .codex)
-        fixture.controller.menuWillOpen(menu)
-        defer { fixture.controller.menuDidClose(menu) }
-        #expect(menu.items.contains { $0.title == "By machine…" })
+        let action = try #require(menu.items.first { $0.title == "By machine…" })
+        fixture.controller.settingsOpenHandler = { _ in }
         for _ in 0..<5 {
-            fixture.dashboard.revealMachineSpend()
+            _ = fixture.controller.perform(action.action)
             _ = fixture.dashboard.machineCostMenuLines()
         }
+        fixture.controller.menuWillOpen(menu)
+        defer { fixture.controller.menuDidClose(menu) }
         #expect(fixture.dashboard.machineExpanded && fixture.dashboard.machineRevealRevision == 5)
         #expect(await calls.loadCount == 0)
         fixture.dashboard.runMachineSpend(hosts: ["offline"], eligible: true, localPartial: false)
@@ -170,7 +169,7 @@ extension CodexMachineMenuTests {
         let row = try #require(rows.first)
         #expect(rows.count == 1)
         #expect(row.title == "Across machines")
-        #expect(row.toolTip?.contains("Today (UTC): $4.20 · 110 tokens") == true)
+        #expect(row.toolTip == fixture.dashboard.machineCostMenuLines().joined(separator: "\n"))
         let localID = layout == "stacked" ? "menuCard-1" : layout == "merged" ? "menuCard" : "menuCardCost"
         let localIndex = try #require(menu.items.firstIndex { $0.representedObject as? String == localID })
         let rowIndex = try #require(menu.items.firstIndex { $0 === row })
@@ -302,7 +301,7 @@ private struct MachineMenuFixture {
             account: AccountInfo(email: nil, plan: nil),
             updater: DisabledUpdaterController(),
             preferencesSelection: PreferencesSelection(),
-            statusBar: RecordingStatusBar(),
+            statusBar: testStatusBar(),
             menuCardRenderingEnabled: false,
             menuRefreshEnabled: false,
             observeProviderConfigNotifications: false)

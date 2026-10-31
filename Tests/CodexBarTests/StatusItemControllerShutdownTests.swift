@@ -555,7 +555,7 @@ struct StatusItemControllerShutdownTests {
     }
 }
 
-final class RecordingStatusBar: NSStatusBar {
+private final class RecordingStatusBar: NSStatusBar {
     var createdItems: [RecordingStatusItem] = []
     var removedItems: [NSStatusItem] = []
     var onRemove: ((NSStatusItem) -> Void)?
@@ -574,7 +574,7 @@ final class RecordingStatusBar: NSStatusBar {
     }
 }
 
-final class RecordingStatusItem: NSStatusItem {
+private final class RecordingStatusItem: NSStatusItem {
     var events: [String] = []
     var unnamedVisibleEvents: [String] = []
     var firstShownName: String?

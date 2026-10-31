@@ -128,6 +128,7 @@ struct CodexRequestSubtotalTests {
         #expect(result.reports.map { $0.subtotal?.requestCount } == [1, 1])
         #expect(result.subtotal?.requestCount == 1)
         let json = try #require(CodexIdentifiedCollection.encodeJSON(result, pretty: false))
+        #expect(!json.contains("todaySubtotal"))
         let object = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let reports = try #require(object["reports"] as? [[String: Any]])
         #expect(reports.allSatisfy { $0["subtotal"] == nil })
@@ -151,6 +152,7 @@ struct CodexRequestSubtotalTests {
             local: { fixture },
             fetchRemote: { _ in fixture })
         #expect(cli.reports.allSatisfy { $0.subtotal == nil })
+        #expect(cli.todaySubtotal == nil)
     }
 
     @Test
@@ -931,7 +933,7 @@ extension CodexRequestSubtotalTests {
 
 extension CodexRequestSubtotalTests {
     @Test
-    func `app today excludes yesterday with missing sources and stays off the CLI wire`() async throws {
+    func `app today reaches the merge window with a missing source`() async throws {
         var fixture = CodexRequestLedger(startUnixMs: 86_400_000, endUnixMs: 172_801_000)
         fixture.records = [
             Self.accountingRow(id: "e", timestamp: 172_800_000, cached: 0, reasoning: nil),
@@ -950,14 +952,5 @@ extension CodexRequestSubtotalTests {
             })
         #expect(app.todaySubtotal?.requestCount == 1)
         #expect(app.todaySubtotal?.totalTokens == 110)
-        let encoded = try #require(CodexIdentifiedCollection.encodeJSON(app, pretty: false))
-        #expect(!encoded.contains("todaySubtotal"))
-        let cli = try await CodexIdentifiedCollection.collect(
-            remotes: [],
-            startUnixMs: ledger.startUnixMs,
-            endUnixMs: ledger.endUnixMs,
-            local: { ledger },
-            fetchRemote: { _ in ledger })
-        #expect(cli.todaySubtotal == nil)
     }
 }
