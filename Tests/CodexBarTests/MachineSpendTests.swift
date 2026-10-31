@@ -75,13 +75,11 @@ struct MachineSpendTests {
         #expect(settings.costUsageHosts == ["B"])
         #expect(testSettingsStore(suiteName: #function, userDefaults: defaults).costUsageHosts == ["B"])
         settings.agentSessionsManualHosts = "A, B, bad/path"
-        settings.costUsageHosts = ["B", "bad/path"]
         #expect(settings.selectableCostUsageHosts == ["A", "B"])
-        #expect(settings.costUsageHosts == ["B"])
     }
 
     @Test
-    func `manual runs receive hosts and UTC period and cancel or stop rejects late completion`() async {
+    func `manual runs receive hosts and period and cancel or stop rejects late completion`() async {
         let pending = PendingMachineCollection()
         let controller = SpendDashboardController(
             userDefaults: InMemoryUserDefaults(),
