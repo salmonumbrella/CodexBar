@@ -89,7 +89,7 @@ extension StatusItemController {
     /// Provider-specific by design: only Codex has the manual identified-request collector.
     func showsMachineCostMenu(for provider: UsageProvider) -> Bool {
         provider == .codex && self.settings.costSummaryShowsSubmenu(for: provider) &&
-            SpendDashboardSource.costCapableProviders(store: self.store).contains(.codex)
+            self.store.enabledFirstPartyProvidersForDisplay().contains(.codex)
     }
 
     func addCostMenuItems(

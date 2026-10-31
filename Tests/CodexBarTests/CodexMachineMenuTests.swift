@@ -307,7 +307,7 @@ private struct MachineMenuFixture {
             account: AccountInfo(email: nil, plan: nil),
             updater: DisabledUpdaterController(),
             preferencesSelection: PreferencesSelection(),
-            statusBar: MachineMenuStatusBar(),
+            statusBar: RecordingStatusBar(),
             menuCardRenderingEnabled: false,
             menuRefreshEnabled: false,
             observeProviderConfigNotifications: false)
@@ -317,37 +317,5 @@ private struct MachineMenuFixture {
         self.controller.releaseStatusItemsForTesting()
         self.dashboard.stop()
         self.settings.configFileWatcher?.stop()
-    }
-}
-
-private final class MachineMenuStatusBar: NSStatusBar {
-    override func statusItem(withLength _: CGFloat) -> NSStatusItem { MachineMenuStatusItem() }
-    override func removeStatusItem(_: NSStatusItem) {}
-}
-
-private final class MachineMenuStatusItem: NSStatusItem {
-    private var storedMenu: NSMenu?
-    override var menu: NSMenu? {
-        get { self.storedMenu }
-        set { self.storedMenu = newValue }
-    }
-
-    override var autosaveName: String! {
-        get { "synthetic-machine-menu" }
-        set {}
-    }
-
-    override var isVisible: Bool {
-        get { false }
-        set {}
-    }
-
-    override var length: CGFloat {
-        get { 0 }
-        set {}
-    }
-
-    override var button: NSStatusBarButton? {
-        nil
     }
 }
