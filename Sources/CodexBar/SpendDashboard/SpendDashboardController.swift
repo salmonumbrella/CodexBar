@@ -1965,30 +1965,6 @@ extension SpendDashboardController {
         self.machineRevealRevision &+= 1
     }
 
-    func machineCostMenuLines() -> [String] {
-        Self.machineCostMenuLines(
-            result: self.machineResult, localPartial: self.machineLocalPartial, now: self.nowProvider())
-    }
-
-    static func machineCostMenuLines(result: CodexIdentifiedResult?, localPartial: Bool, now: Date) -> [String] {
-        guard let today = CodexIdentifiedCollection.window(days: 1, endUnixMs: Int64(now.timeIntervalSince1970 * 1000)),
-              let result, let subtotal = result.todaySubtotal,
-              let captured = result.reports.compactMap(\.ledger).first,
-              captured.endUnixMs >= today,
-              captured.endUnixMs < today + 86_400_000
-        else { return [] }
-        let tokens = L("%@ tokens", UsageFormatter.tokenCountString(subtotal.totalTokens))
-        let amount = subtotal.costUSD.map { UsageFormatter.currencyString($0, currencyCode: "USD") }
-        let usage = amount.map { "\($0) · \(tokens)" } ?? "\(tokens) · \(L("Price unknown"))"
-        let minutes = captured.endUnixMs % 86_400_000 / 60000
-        let time = String(format: "%02d:%02d", minutes / 60, minutes % 60)
-        let available = result.reports.filter { $0.ledger != nil }.count
-        var coverage = L("As of %@ UTC · %d/%d sources", time, available, result.reports.count)
-        if result.partial || subtotal.partial || localPartial { coverage += " · \(L("codex_workspaces_partial_data"))" }
-        let scope = "\(L("Across machines")) · \(L("Codex identified requests"))"
-        return [scope, L("Today (UTC): %@", usage), coverage]
-    }
-
     func cancelMachineSpend() {
         self.machineTask?.cancel()
         self.machineTask = nil

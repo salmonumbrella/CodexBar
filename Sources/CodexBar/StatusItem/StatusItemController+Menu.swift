@@ -771,7 +771,7 @@ extension StatusItemController {
             heightCacheScope: context.currentProvider.rawValue,
             heightCacheFingerprint: renderedModel.heightFingerprint(section: "card"),
             containsInteractiveControls: true))
-        self.addMachineCostMenuItems(to: menu, provider: context.currentProvider, width: context.menuWidth)
+        self.addMachineCostMenuItems(to: menu, provider: context.currentProvider)
         self.addFleetAccountMenuCards(fleetProjection.additionalAccounts, to: menu, context: context)
         if self.addStorageMenuCardSection(to: menu, provider: context.currentProvider, width: context.menuWidth) {
             menu.addItem(.separator())

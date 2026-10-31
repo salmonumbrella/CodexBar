@@ -128,7 +128,6 @@ struct CodexRequestSubtotalTests {
         #expect(result.reports.map { $0.subtotal?.requestCount } == [1, 1])
         #expect(result.subtotal?.requestCount == 1)
         let json = try #require(CodexIdentifiedCollection.encodeJSON(result, pretty: false))
-        #expect(!json.contains("todaySubtotal"))
         let object = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let reports = try #require(object["reports"] as? [[String: Any]])
         #expect(reports.allSatisfy { $0["subtotal"] == nil })
@@ -152,7 +151,6 @@ struct CodexRequestSubtotalTests {
             local: { fixture },
             fetchRemote: { _ in fixture })
         #expect(cli.reports.allSatisfy { $0.subtotal == nil })
-        #expect(cli.todaySubtotal == nil)
     }
 
     @Test
@@ -901,56 +899,4 @@ extension CodexRequestSubtotalTests {
     }
 
     private static let nativeMetadata = #"{"type":"session_meta","payload":{"id":"fixture-session"}}"#
-}
-
-extension CodexRequestSubtotalTests {
-    @Test
-    func `today follows full conflict decisions and ignores yesterday unknown prices`() throws {
-        let today: Int64 = 172_800_000
-        var local = CodexRequestLedger(startUnixMs: 86_400_000, endUnixMs: today + 1000)
-        local.records = [
-            Self.accountingRow(timestamp: today, cached: 0, reasoning: nil),
-            Self.accountingRow(id: "b", model: nil, mode: nil, timestamp: today - 1, cached: 0, reasoning: nil),
-            Self.accountingRow(id: "c", timestamp: today, cached: 0, reasoning: nil),
-        ]
-        var remote = local
-        remote.records = [
-            Self.accountingRow(timestamp: today, cached: 0, reasoning: nil),
-            Self.accountingRow(id: "c", timestamp: today - 1, cached: 0, reasoning: nil),
-        ]
-        let subtotal = try CodexRequestLedger.merge(
-            [local, remote],
-            catalog: ModelsDevCatalog(providers: [:]),
-            customPricing: .empty,
-            recordWindow: today...(today + 1000))
-        #expect(subtotal.requestCount == 1)
-        #expect(subtotal.totalTokens == 110)
-        #expect(subtotal.conflictCount == 1)
-        #expect(subtotal.partial)
-        #expect(subtotal.costUSD != nil)
-    }
-}
-
-extension CodexRequestSubtotalTests {
-    @Test
-    func `app today reaches the merge window with a missing source`() async throws {
-        var fixture = CodexRequestLedger(startUnixMs: 86_400_000, endUnixMs: 172_801_000)
-        fixture.records = [
-            Self.accountingRow(id: "e", timestamp: 172_800_000, cached: 0, reasoning: nil),
-            Self.accountingRow(id: "f", timestamp: 172_799_999, cached: 0, reasoning: nil),
-        ]
-        let ledger = fixture
-        let app = try await CodexIdentifiedCollection.collect(
-            remotes: ["copy", "missing"],
-            startUnixMs: ledger.startUnixMs,
-            endUnixMs: ledger.endUnixMs,
-            includeSourceSubtotals: true,
-            local: { ledger },
-            fetchRemote: { host in
-                if host == "missing" { throw RemoteCodexCostError.unavailable }
-                return ledger
-            })
-        #expect(app.todaySubtotal?.requestCount == 1)
-        #expect(app.todaySubtotal?.totalTokens == 110)
-    }
 }

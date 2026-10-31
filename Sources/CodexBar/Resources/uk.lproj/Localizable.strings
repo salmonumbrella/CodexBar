@@ -2795,10 +2795,6 @@
 "Rewards" = "Винагороди";
 "Reward expiry" = "Термін дії винагород";
 "By machine" = "За комп’ютерами";
-"Across machines" = "На всіх комп’ютерах";
-"Today (UTC): %@" = "Сьогодні (UTC): %@";
-"As of %@ UTC · %d/%d sources" = "Станом на %@ UTC · джерела: %d/%d";
-"Price unknown" = "Ціна невідома";
 "Machine %d" = "Комп’ютер %d";
 "Codex identified requests" = "Ідентифіковані запити Codex";
 "Shared requests count once." = "Спільні запити враховуються один раз.";

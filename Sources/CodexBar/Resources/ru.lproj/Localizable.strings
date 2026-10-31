@@ -2795,10 +2795,6 @@
 "Rewards" = "Награды";
 "Reward expiry" = "Срок действия наград";
 "By machine" = "По компьютерам";
-"Across machines" = "На всех компьютерах";
-"Today (UTC): %@" = "Сегодня (UTC): %@";
-"As of %@ UTC · %d/%d sources" = "По состоянию на %@ UTC · источники: %d/%d";
-"Price unknown" = "Цена неизвестна";
 "Machine %d" = "Компьютер %d";
 "Codex identified requests" = "Идентифицированные запросы Codex";
 "Shared requests count once." = "Общие запросы учитываются один раз.";

@@ -2762,10 +2762,6 @@
 "Rewards" = "보상";
 "Reward expiry" = "보상 만료일";
 "By machine" = "컴퓨터별";
-"Across machines" = "모든 컴퓨터";
-"Today (UTC): %@" = "오늘 (UTC): %@";
-"As of %@ UTC · %d/%d sources" = "%@ UTC 기준 · 소스 %d/%d개";
-"Price unknown" = "요금 알 수 없음";
 "Machine %d" = "컴퓨터 %d";
 "Codex identified requests" = "식별된 Codex 요청";
 "Shared requests count once." = "공유 요청은 한 번만 계산됩니다.";

@@ -2798,10 +2798,6 @@
 "Rewards" = "پاداش‌ها";
 "Reward expiry" = "انقضای پاداش‌ها";
 "By machine" = "بر اساس دستگاه";
-"Across machines" = "در همهٔ دستگاه‌ها";
-"Today (UTC): %@" = "امروز (UTC): %@";
-"As of %@ UTC · %d/%d sources" = "تا %@ UTC · %d/%d منبع";
-"Price unknown" = "قیمت نامشخص";
 "Machine %d" = "دستگاه %d";
 "Codex identified requests" = "درخواست‌های شناسایی‌شده Codex";
 "Shared requests count once." = "درخواست‌های مشترک یک بار شمرده می‌شوند.";

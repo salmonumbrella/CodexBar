@@ -43,45 +43,32 @@ extension StatusItemController {
         width: CGFloat) -> NSMenuItem
     {
         let title = Self.costMenuTitleForProvider(model.provider)
-        let tooltipLines = Self.costMenuTooltipLines(
-            provider: model.provider, tokenUsage: model.tokenUsage)
+        let tooltipLines = Self.costMenuTooltipLines(provider: model.provider, tokenUsage: model.tokenUsage)
         let visibleDetailLines = Self.costMenuVisibleDetailLines(
             provider: model.provider,
             tokenUsage: model.tokenUsage,
             hasSubmenu: submenu != nil)
-        return self.makeCostMenuRowItem(
-            CostMenuCardRowView(title: title, detailLines: visibleDetailLines, width: width),
-            tooltipLines: tooltipLines,
-            submenu: submenu,
-            provider: model.provider,
-            id: "menuCardCost")
-    }
-
-    private func makeCostMenuRowItem(
-        _ row: CostMenuCardRowView,
-        tooltipLines: [String],
-        submenu: NSMenu?,
-        provider: UsageProvider,
-        id: String) -> NSMenuItem
-    {
-        guard !row.detailLines.isEmpty, self.menuCardRenderingEnabledForController else {
+        guard visibleDetailLines.isEmpty == false, self.menuCardRenderingEnabledForController else {
             return Self.makeNativeCostMenuCardItem(
-                title: row.title,
-                visibleDetailLines: row.detailLines,
+                title: title,
+                visibleDetailLines: visibleDetailLines,
                 tooltipLines: tooltipLines,
-                submenu: submenu,
-                id: id)
+                submenu: submenu)
         }
+
         let item = self.makeMenuCardItem(
-            row,
-            id: id,
-            width: row.width,
-            heightCacheScope: provider.rawValue,
-            heightCacheFingerprint: "costMenuRow:\(row.detailLines.count)",
+            CostMenuCardRowView(
+                title: title,
+                detailLines: visibleDetailLines,
+                width: width),
+            id: "menuCardCost",
+            width: width,
+            heightCacheScope: model.provider.rawValue,
+            heightCacheFingerprint: "costMenuRow:\(visibleDetailLines.count)",
             submenu: submenu,
             submenuIndicatorAlignment: .trailing,
             submenuIndicatorTopPadding: 0)
-        item.title = row.title
+        item.title = title
         item.toolTip = tooltipLines.joined(separator: "\n")
         return item
     }
@@ -102,24 +89,12 @@ extension StatusItemController {
         if includeLocalCost, model.tokenUsage != nil {
             menu.addItem(self.makeCostMenuCardItem(model: model, submenu: submenu, width: width))
         }
-        self.addMachineCostMenuItems(to: menu, provider: model.provider, width: width)
+        self.addMachineCostMenuItems(to: menu, provider: model.provider)
     }
 
-    func addMachineCostMenuItems(to menu: NSMenu, provider: UsageProvider, width: CGFloat) {
+    func addMachineCostMenuItems(to menu: NSMenu, provider: UsageProvider) {
         guard self.showsMachineCostMenu(for: provider) else { return }
-        let lines = self.store.sharedSpendDashboardController().machineCostMenuLines()
         if menu.items.last?.isSeparatorItem != true { menu.addItem(.separator()) }
-        if !lines.isEmpty {
-            menu.addItem(self.makeCostMenuRowItem(
-                CostMenuCardRowView(
-                    title: L("Across machines"),
-                    detailLines: [L("Codex identified requests")] + lines.dropFirst(),
-                    width: width),
-                tooltipLines: lines,
-                submenu: nil,
-                provider: provider,
-                id: "menuCardMachineCost"))
-        }
         let action = NSMenuItem(
             title: "\(L("By machine"))…",
             action: #selector(self.openMachineSpend),
@@ -140,12 +115,11 @@ extension StatusItemController {
         title: String,
         visibleDetailLines: [String],
         tooltipLines: [String],
-        submenu: NSMenu?,
-        id: String) -> NSMenuItem
+        submenu: NSMenu?) -> NSMenuItem
     {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = true
-        item.representedObject = id
+        item.representedObject = "menuCardCost"
         item.submenu = submenu
         // Submenu cost rows already show these details; keep tooltips only for inline rows
         // where they reveal truncated text and avoid flashes during in-place menu refreshes.

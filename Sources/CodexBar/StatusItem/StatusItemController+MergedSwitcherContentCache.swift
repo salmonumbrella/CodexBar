@@ -13,20 +13,14 @@ struct CachedMergedSwitcherMenuContent {
         menuWidth: CGFloat,
         codexAccountDisplay: CodexAccountMenuDisplay?,
         tokenAccountDisplay: TokenAccountMenuDisplay?,
-        localizationSignature: String,
-        machineCostMenuLines: [String]? = nil)
+        localizationSignature: String)
         -> Bool
     {
         self.requiredMenuContentVersion >= requiredMenuContentVersion &&
             abs(self.menuWidth - menuWidth) <= 0.5 &&
             self.codexAccountDisplay == codexAccountDisplay &&
             self.tokenAccountDisplay == tokenAccountDisplay &&
-            self.localizationSignature == localizationSignature &&
-            (machineCostMenuLines.map { lines in
-                // Compare rendered content so parking an older outgoing tab cannot stamp it as current.
-                let row = self.items.first { $0.representedObject as? String == "menuCardMachineCost" }
-                return (row?.toolTip ?? "") == lines.joined(separator: "\n")
-            } ?? true)
+            self.localizationSignature == localizationSignature
     }
 }
 
@@ -111,12 +105,7 @@ extension StatusItemController {
             menuWidth: menuWidth,
             codexAccountDisplay: codexAccountDisplay,
             tokenAccountDisplay: tokenAccountDisplay,
-            localizationSignature: self.menuLocalizationSignature(),
-            // Provider-specific by design: only Codex renders a manual identified-request subtotal.
-            machineCostMenuLines: selection == .provider(.codex)
-                ? (self.showsMachineCostMenu(for: .codex)
-                    ? self.store.sharedSpendDashboardController().machineCostMenuLines() : [])
-                : nil)
+            localizationSignature: self.menuLocalizationSignature())
         else {
             self.mergedSwitcherContentCaches[key]?.removeValue(forKey: selection)
             return nil

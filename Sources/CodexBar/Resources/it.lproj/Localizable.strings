@@ -2798,10 +2798,6 @@
 "Rewards" = "Premi";
 "Reward expiry" = "Scadenza dei premi";
 "By machine" = "Per computer";
-"Across machines" = "Su più computer";
-"Today (UTC): %@" = "Oggi (UTC): %@";
-"As of %@ UTC · %d/%d sources" = "Alle %@ UTC · %d/%d fonti";
-"Price unknown" = "Prezzo sconosciuto";
 "Machine %d" = "Computer %d";
 "Codex identified requests" = "Richieste Codex identificate";
 "Shared requests count once." = "Le richieste condivise vengono contate una sola volta.";

@@ -17,7 +17,6 @@ package struct CodexIdentifiedResult: Codable, Sendable {
     package let allSourcesAvailable: Bool
     package let partial: Bool
     package var localLedgerJSON: String?
-    package var todaySubtotal: CodexRequestSubtotal?
 
     enum CodingKeys: String, CodingKey {
         case reports, subtotal, allSourcesAvailable, partial
@@ -76,7 +75,7 @@ package enum CodexIdentifiedCollection {
                 }
                 if !remotes.isEmpty, let merge {
                     // Reject an overflowing union while the earlier sources remain available.
-                    subtotal = try merge(reports.compactMap(\.ledger) + [ledger], nil)
+                    subtotal = try merge(reports.compactMap(\.ledger) + [ledger])
                 }
                 reports.append(.init(
                     host: host,
@@ -85,7 +84,7 @@ package enum CodexIdentifiedCollection {
                     ledger: ledger,
                     error: nil,
                     subtotal: includeSourceSubtotals
-                        ? (sourceIndex == 0 ? subtotal : nil) ?? (try? merge?([ledger], nil))
+                        ? (sourceIndex == 0 ? subtotal : nil) ?? (try? merge?([ledger]))
                         : nil))
             } catch is CancellationError {
                 throw CancellationError()
@@ -104,21 +103,12 @@ package enum CodexIdentifiedCollection {
             }
         }
         try Task.checkCancellation()
-        let todaySubtotal: CodexRequestSubtotal? = if includeSourceSubtotals, let merge,
-                                                      let today = Self.window(days: 1, endUnixMs: endUnixMs)
-        {
-            // Use the collection's pricing snapshot and full conflict decisions, without retaining another ledger.
-            try? merge(reports.compactMap(\.ledger), today...endUnixMs)
-        } else {
-            nil
-        }
         let available = reports.allSatisfy { $0.ledger != nil }
         return CodexIdentifiedResult(
             reports: reports,
             subtotal: subtotal,
             allSourcesAvailable: available,
             partial: !available || (subtotal?.partial ?? false),
-            localLedgerJSON: localLedgerJSON,
-            todaySubtotal: todaySubtotal)
+            localLedgerJSON: localLedgerJSON)
     }
 }

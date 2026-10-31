@@ -2791,10 +2791,6 @@
 "Rewards" = "Beloningen";
 "Reward expiry" = "Vervaldatum beloningen";
 "By machine" = "Per machine";
-"Across machines" = "Op alle machines";
-"Today (UTC): %@" = "Vandaag (UTC): %@";
-"As of %@ UTC · %d/%d sources" = "Per %@ UTC · %d/%d bronnen";
-"Price unknown" = "Prijs onbekend";
 "Machine %d" = "Machine %d";
 "Codex identified requests" = "Geïdentificeerde Codex-verzoeken";
 "Shared requests count once." = "Gedeelde verzoeken tellen één keer mee.";

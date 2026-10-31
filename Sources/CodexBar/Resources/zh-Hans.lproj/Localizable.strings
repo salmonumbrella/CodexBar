@@ -2786,10 +2786,6 @@
 "Rewards" = "奖励";
 "Reward expiry" = "奖励到期日期";
 "By machine" = "按机器";
-"Across machines" = "跨机器";
-"Today (UTC): %@" = "今天（UTC）：%@";
-"As of %@ UTC · %d/%d sources" = "截至 %@ UTC · %d/%d 个来源";
-"Price unknown" = "价格未知";
 "Machine %d" = "机器 %d";
 "Codex identified requests" = "已识别的 Codex 请求";
 "Shared requests count once." = "共享请求只计算一次。";

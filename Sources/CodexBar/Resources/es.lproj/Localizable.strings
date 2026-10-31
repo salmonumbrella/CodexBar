@@ -2792,10 +2792,6 @@
 "Rewards" = "Recompensas";
 "Reward expiry" = "Vencimiento de las recompensas";
 "By machine" = "Por equipo";
-"Across machines" = "Entre equipos";
-"Today (UTC): %@" = "Hoy (UTC): %@";
-"As of %@ UTC · %d/%d sources" = "A las %@ UTC · %d/%d fuentes";
-"Price unknown" = "Precio desconocido";
 "Machine %d" = "Equipo %d";
 "Codex identified requests" = "Solicitudes de Codex identificadas";
 "Shared requests count once." = "Las solicitudes compartidas se cuentan una sola vez.";
