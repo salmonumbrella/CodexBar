@@ -48,7 +48,7 @@ struct CodexPriorityDatabaseIsolationTests {
     }
 
     @Test(arguments: [false, true])
-    func `ordinary execution retains the system Codex trace path`(injectedHome: Bool) {
+    func `ordinary execution resolves injected or environment Codex trace paths`(injectedHome: Bool) {
         let root = URL(fileURLWithPath: "/synthetic/user/.codex", isDirectory: true)
         let url = CodexPriorityDatabasePath.defaultURL(
             processName: "CodexBar",

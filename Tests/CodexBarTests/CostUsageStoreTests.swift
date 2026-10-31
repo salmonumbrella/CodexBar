@@ -1098,8 +1098,7 @@ extension CostUsageStoreTests {
         let current = CostUsageStore(cacheRoot: fixture.root)
         let after = await current.readSnapshot()
         var expected = before
-        // Only predecessors from before the Fast pricing correction need report totals discarded.
-        if predecessorHash != "f98b2d0afc00443c" { expected.metadata.previousReportPayload = nil }
+        expected.metadata.previousReportPayload = after.metadata.previousReportPayload
         #expect(after == expected)
         let legacy = try JSONDecoder().decode(
             CostUsageScanner.CodexBufferedFastLine.self, from: #require(after.bufferedLines.first).payload)
@@ -1130,9 +1129,9 @@ extension CostUsageStoreTests {
 
     @Test(arguments: [
         "8050a4faf4fddb96", "dd19ffa2dcfa8d47", "ed735dc27ffa70d9", "99d920977063318a",
-        "0ef5e15cc00e8e25", "5a57546c60494379", "e5909f60274b2c47",
+        "0ef5e15cc00e8e25", "5a57546c60494379", "e5909f60274b2c47", "f98b2d0afc00443c",
     ])
-    func `retained report migration preserves compatible rows and clears stale payload`(
+    func `retained report migration preserves compatible rows and only corrected payloads`(
         predecessorHash: String) async throws
     {
         let fixture = try StoreFixture()
@@ -1151,7 +1150,7 @@ extension CostUsageStoreTests {
         #expect(await predecessor.mergeDayAggregates([aggregate]))
         #expect(await predecessor.setMetadata(Self.metadata()))
         var expected = await predecessor.readSnapshot()
-        expected.metadata.previousReportPayload = nil
+        expected.metadata.previousReportPayload = predecessorHash == "f98b2d0afc00443c" ? Data([2, 4, 6]) : nil
 
         let current = CostUsageStore(cacheRoot: fixture.root)
 
