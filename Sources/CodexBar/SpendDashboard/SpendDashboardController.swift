@@ -1974,7 +1974,7 @@ extension SpendDashboardController {
         let today = Int64(now.timeIntervalSince1970 * 1000) / 86_400_000 * 86_400_000
         guard let result, let subtotal = result.todaySubtotal,
               let captured = result.reports.compactMap(\.ledger).first,
-              captured.startUnixMs <= today, captured.endUnixMs >= today,
+              captured.endUnixMs >= today,
               captured.endUnixMs < today + 86_400_000
         else { return [] }
         let tokens = L("%@ tokens", UsageFormatter.tokenCountString(subtotal.totalTokens))

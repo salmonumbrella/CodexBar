@@ -380,6 +380,7 @@ extension StatusItemController {
         let key = ObjectIdentifier(menu)
         if self.menuSession.needsRefresh(key) { return true }
         let providers = self.renderedProviders(for: menu)
+        // Provider-specific by design: Codex's manual subtotal changes outside normal provider refreshes.
         return providers.contains(.codex) && self.showsMachineCostMenu(for: .codex) &&
             self.menuIdentitySignatures[key] != self.menuIdentitySignature(for: providers)
     }

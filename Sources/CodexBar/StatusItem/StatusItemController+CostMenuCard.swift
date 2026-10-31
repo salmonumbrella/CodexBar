@@ -86,6 +86,7 @@ extension StatusItemController {
         return item
     }
 
+    /// Provider-specific by design: only Codex has the manual identified-request collector.
     func showsMachineCostMenu(for provider: UsageProvider) -> Bool {
         provider == .codex && self.settings.costSummaryShowsSubmenu(for: provider) &&
             SpendDashboardSource.costCapableProviders(store: self.store).contains(.codex)
@@ -128,6 +129,7 @@ extension StatusItemController {
     }
 
     @objc private func openMachineSpend() {
+        // Provider-specific by design: this action opens Codex's manual identified-request detail.
         guard self.showsMachineCostMenu(for: .codex) else { return }
         _ = self.closeOpenMenusFromShortcutIfNeeded()
         SessionUsageNavigation.shared.request = nil

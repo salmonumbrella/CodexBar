@@ -239,6 +239,54 @@ extension CodexMachineMenuTests {
     }
 }
 
+extension CodexMachineMenuTests {
+    @Test(CodexCredentialFixtures(), arguments: ["arrival", "rollover"])
+    func `cached Codex tab validates the current manual machine projection`(change: String) async throws {
+        let clock = LockIsolated(Date(timeIntervalSince1970: 1_728_000_100))
+        let fixture = try MachineMenuFixture(result: Self.result(cost: 4.2), now: { clock.value })
+        defer { fixture.stop() }
+        if change == "rollover" {
+            fixture.dashboard.runMachineSpend(hosts: [], eligible: true, localPartial: false)
+            while fixture.dashboard.machineRunning {
+                await Task.yield()
+            }
+        }
+        let menu = NSMenu()
+        let content = NSMenu()
+        fixture.controller.addMachineCostMenuItems(to: content, provider: .codex, width: 350)
+        #expect(content.items.contains { $0.representedObject as? String == "menuCardMachineCost" }
+            == (change == "rollover"))
+        fixture.controller.lastMenuLocalizationSignature = fixture.controller.menuLocalizationSignature()
+        fixture.controller.cacheMergedSwitcherContent(
+            content.items,
+            in: menu,
+            selection: .provider(.codex),
+            context: .init(menuWidth: 350, codexAccountDisplay: nil, tokenAccountDisplay: nil, contentVersion: nil))
+        #expect(fixture.controller.reusableMergedSwitcherContent(
+            for: .provider(.codex),
+            in: menu,
+            menuWidth: 350,
+            codexAccountDisplay: nil,
+            tokenAccountDisplay: nil) != nil)
+        if change == "arrival" {
+            fixture.dashboard.runMachineSpend(hosts: [], eligible: true, localPartial: false)
+            while fixture.dashboard.machineRunning {
+                await Task.yield()
+            }
+        } else {
+            clock.setValue(Date(timeIntervalSince1970: 1_728_086_400))
+        }
+        #expect(fixture.dashboard.machineCostMenuLines().isEmpty == (change == "rollover"))
+        #expect(fixture.controller.reusableMergedSwitcherContent(
+            for: .provider(.codex),
+            in: menu,
+            menuWidth: 350,
+            codexAccountDisplay: nil,
+            tokenAccountDisplay: nil) == nil)
+        #expect(!fixture.dashboard.machineRunning)
+    }
+}
+
 @MainActor
 private struct MachineMenuFixture {
     let settings: SettingsStore
@@ -246,7 +294,10 @@ private struct MachineMenuFixture {
     let dashboard: SpendDashboardController
     let controller: StatusItemController
 
-    init(result: CodexIdentifiedResult? = nil) throws {
+    init(
+        result: CodexIdentifiedResult? = nil,
+        now: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 1_728_000_100) }) throws
+    {
         let root = CodexCredentialFixtures.root
         let environment = [
             "HOME": root.path,
@@ -288,7 +339,7 @@ private struct MachineMenuFixture {
                 guard let result else { throw CancellationError() }
                 return result
             },
-            nowProvider: { Date(timeIntervalSince1970: 1_728_000_100) })
+            nowProvider: now)
         store.sharedSpendDashboardControllerStorage = dashboard
         self.settings = settings
         self.store = store
