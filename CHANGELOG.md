@@ -8,6 +8,7 @@
 
 - CLI: combine identified Codex requests from multiple SSH hosts, counting copies once and keeping successful sources when a host fails (#4834). Thanks @salmonumbrella!
 - CLI: estimate deduplicated Codex request spend across SSH hosts with explicit unknown prices, conflict exclusions, and a coordinated schema 2 upgrade (#4833, #4836). Thanks @salmonumbrella!
+- Plugins: render global menu-bar layouts with plugin-owned windows, reset countdowns and conditionals, preserving saved plugin overrides (#4789).
 - OpenDesign: track the active workspace's five-hour and weekly subscription allowance through its browser session (#4601). Thanks @vimcaw and @irfndi!
 - Plugins: let each snapshot choose a built-in provider logo for its menu bar and switcher, independently of plugin identity and quota ownership (#4801). Thanks @KLIEBHAN!
 - Plugins: show compact multi-quota summaries with ordered logos and quota percentages in the merged menu bar (#4802). Thanks @KLIEBHAN!
@@ -44,6 +45,7 @@
 - Plugins: refresh the selected menu-bar percentage when its usage changes while the automatic window stays unchanged (#4787). Thanks @vincent-peng!
 - Codex: retain cached cost history when previously scanned rollouts become `.jsonl.zst` archives, without duplicate counting (#4523, #4534, #4818). Thanks @BananaIIya, @kali113, @kcharlan, and @cassiarota!
 - OpenCode Go: use the active OpenCode CLI API key stored under `opencode` for server quotas instead of falling back to local estimates. (#4815) Thanks @sreejithraman!
+- Copilot: explain ended subscriptions instead of showing a raw decoding error. (#4851) Thanks @djbclark!
 - Kiro: prefer stateless usage reads to avoid probe chats when available, and use the V2 harness with older-CLI fallback when a CLI report is needed. (#4853, #4854, #4746) Thanks @jeanroloff!
 - Tests: keep Claude dashboard account-selection coverage independent of CI scheduling delays (#4821).
 
