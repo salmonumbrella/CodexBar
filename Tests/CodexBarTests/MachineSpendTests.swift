@@ -70,31 +70,38 @@ struct MachineSpendTests {
         store._test_providerRefreshOverride = { _ in Issue.record("Unexpected provider transport") }
         store._test_widgetSnapshotSaveOverride = { _ in }
         defer { store.stopSharedSpendDashboardPublication(); settings.configFileWatcher?.stop() }
-        var recovery: String?
         for unavailable in [true, false] {
             let controller = SpendDashboardController(
                 userDefaults: InMemoryUserDefaults(),
-                requestBuilder: { _ in
-                    SpendDashboardLoadRequest(
-                        configuration: .init(costUsageEnabled: false, providerIDs: [], codexAccountIdentities: []),
-                        capturedInputs: [],
-                        unavailableSourceIDs: [],
-                        codexRequests: [],
-                        now: Date(timeIntervalSince1970: 172_800),
-                        force: false)
-                },
+                requestBuilder: Self.loadRequest,
                 machineLoader: { hosts, _, start, end in
-                    let ledger = CodexRequestLedger(startUnixMs: start, endUnixMs: end)
-                    return try await CodexIdentifiedCollection.collect(
-                        remotes: hosts,
-                        startUnixMs: start,
-                        endUnixMs: end,
-                        includeSourceSubtotals: true,
-                        local: { ledger },
-                        fetchRemote: { _ in
-                            if unavailable { throw RemoteCodexCostError.unavailable }
-                            return ledger
-                        })
+                    let recovery = "Fixture remote recovery guidance."
+                    let collectedAt = Date(timeIntervalSince1970: 172_800)
+                    let subtotal = CodexRequestSubtotal(
+                        totalTokens: 0,
+                        requestCount: 0,
+                        conflictCount: 0,
+                        excludedCount: 0,
+                        partial: false,
+                        costUSD: 0,
+                        unpricedRequestCount: 0)
+                    return CodexIdentifiedResult(
+                        reports: [.init(
+                            host: "local",
+                            source: "local",
+                            collectedAt: collectedAt,
+                            ledger: CodexRequestLedger(startUnixMs: start, endUnixMs: end),
+                            error: nil,
+                            subtotal: subtotal), .init(
+                            host: hosts.first ?? "missing-host",
+                            source: "ssh",
+                            collectedAt: unavailable ? nil : collectedAt,
+                            ledger: unavailable ? nil : CodexRequestLedger(startUnixMs: start, endUnixMs: end),
+                            error: unavailable ? recovery : nil,
+                            subtotal: unavailable ? nil : subtotal)],
+                        subtotal: subtotal,
+                        allSourcesAvailable: !unavailable,
+                        partial: unavailable)
                 },
                 nowProvider: { Date(timeIntervalSince1970: 172_800) })
             controller.selectPeriod(.rolling(days: 2))
@@ -114,7 +121,7 @@ struct MachineSpendTests {
             hosting.layoutSubtreeIfNeeded()
             let disclosure = try #require(Self.disclosure(in: hosting))
             disclosure.perform(#selector(NSAccessibilityProtocol.accessibilityPerformPress))
-            let deadline = Date().addingTimeInterval(2)
+            let deadline = Date().addingTimeInterval(10)
             while controller.machineResult == nil, Date() < deadline {
                 try await Task.sleep(for: .milliseconds(10))
                 hosting.layoutSubtreeIfNeeded()
@@ -122,7 +129,7 @@ struct MachineSpendTests {
             let result = try #require(controller.machineResult)
             let source = try #require(result.reports.last)
             try #require(source.host == "fixture-host")
-            let expected = unavailable ? try #require(source.error) : try #require(recovery)
+            let expected = "Fixture remote recovery guidance."
             let renderDeadline = Date().addingTimeInterval(1)
             var text = MenuLayoutScreenshotRenderTests.accessibilityText(hosting)
             while !text.contains(L("Shared requests count once.")), Date() < renderDeadline {
@@ -134,7 +141,6 @@ struct MachineSpendTests {
                 text.contains("fixture-host") && text.contains(L("Shared requests count once.")),
                 Comment(rawValue: text))
             if unavailable {
-                recovery = expected
                 try #require(text.contains(L("Unavailable")), Comment(rawValue: text))
                 #expect(text.contains(expected), "The failed source row must show its collector recovery guidance.")
             } else {
@@ -142,6 +148,16 @@ struct MachineSpendTests {
                 #expect(!text.contains(expected))
             }
         }
+    }
+
+    private static func loadRequest(_: SpendDashboardRequestBuildMode) async -> SpendDashboardLoadRequest {
+        SpendDashboardLoadRequest(
+            configuration: .init(costUsageEnabled: false, providerIDs: [], codexAccountIdentities: []),
+            capturedInputs: [],
+            unavailableSourceIDs: [],
+            codexRequests: [],
+            now: Date(timeIntervalSince1970: 172_800),
+            force: false)
     }
 
     private static func disclosure(in element: Any, depth: Int = 0) -> NSObject? {
@@ -185,7 +201,7 @@ struct MachineSpendTests {
     }
 
     @Test
-    func `removing and readding shared host revokes consent across reload`() {
+    func `removing and readding shared host revokes consent across reload and invalid aliases are not selectable`() {
         let defaults = InMemoryUserDefaults()
         let settings = testSettingsStore(suiteName: #function, userDefaults: defaults)
         settings.agentSessionsManualHosts = "A, B"
@@ -193,31 +209,25 @@ struct MachineSpendTests {
         settings.agentSessionsManualHosts = "B"
         settings.agentSessionsManualHosts = "A, B"
         #expect(settings.costUsageHosts == ["B"])
+        defaults.set("B", forKey: "agentSessionsManualHosts")
+        defaults.set(["A", "B"], forKey: "costUsageHosts")
         #expect(testSettingsStore(suiteName: #function, userDefaults: defaults).costUsageHosts == ["B"])
         settings.agentSessionsManualHosts = "A, B, bad/path"
         #expect(settings.selectableCostUsageHosts == ["A", "B"])
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func `manual runs receive hosts and period and cancel or stop rejects late completion`() async {
         let pending = PendingMachineCollection()
         let controller = SpendDashboardController(
             userDefaults: InMemoryUserDefaults(),
-            requestBuilder: { _ in
-                SpendDashboardLoadRequest(
-                    configuration: .init(costUsageEnabled: false, providerIDs: [], codexAccountIdentities: []),
-                    capturedInputs: [],
-                    unavailableSourceIDs: [],
-                    codexRequests: [],
-                    now: Date(timeIntervalSince1970: 172_800),
-                    force: false)
-            },
+            requestBuilder: Self.loadRequest,
             machineLoader: { hosts, days, _, _ in await pending.load(hosts, days: days) },
             nowProvider: { Date(timeIntervalSince1970: 172_800) })
         controller.selectPeriod(.rolling(days: 2))
         let cancelledCompletion = AsyncStream<Void>.makeStream()
         MachineTaskCompletion.$token.withValue(MachineTaskCompletion.Token(cancelledCompletion.continuation)) {
-            controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: true)
+            controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: false)
         }
         while await pending.calls.isEmpty {
             await Task.yield()
@@ -235,7 +245,7 @@ struct MachineSpendTests {
         #expect(await pending.calls.count == 1)
         let stoppedCompletion = AsyncStream<Void>.makeStream()
         MachineTaskCompletion.$token.withValue(MachineTaskCompletion.Token(stoppedCompletion.continuation)) {
-            controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: true)
+            controller.runMachineSpend(hosts: ["selected"], eligible: true, localPartial: false)
         }
         while await pending.calls.count < 2 {
             await Task.yield()

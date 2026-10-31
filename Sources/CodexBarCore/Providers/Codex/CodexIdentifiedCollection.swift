@@ -28,8 +28,7 @@ package enum CodexIdentifiedCollection {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .gmt
         let end = Date(timeIntervalSince1970: Double(endUnixMs) / 1000)
-        guard (1...365).contains(days),
-              let start = calendar.date(byAdding: .day, value: 1 - days, to: calendar.startOfDay(for: end)),
+        guard let start = calendar.date(byAdding: .day, value: 1 - days, to: calendar.startOfDay(for: end)),
               start.timeIntervalSince1970 >= 0 else { return nil }
         return Int64(start.timeIntervalSince1970 * 1000)
     }

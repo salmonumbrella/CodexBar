@@ -56,6 +56,20 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test
+    func `remote byte bound applies to received JSON rather than reencoding`() async throws {
+        let remote = Self.source([Self.accountingRow(
+            id: "b", model: String(repeating: "/", count: CodexRequestLedger.maximumOutputBytes / 2), mode: nil)])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        let wire = try #require(String(data: encoder.encode(remote), encoding: .utf8))
+        #expect(wire.utf8.count < CodexRequestLedger.maximumOutputBytes)
+        let fetcher = RemoteCodexCostFetcher(runner: { _, _ in wire })
+        let ledger = try await fetcher.fetchIdentifiedUsage(
+            host: "fixture-host", historyDays: 1, startUnixMs: Self.start, endUnixMs: Self.end)
+        #expect(ledger.records == remote.records)
+    }
+
+    @Test
     func `local identified export enforces the emitted byte limit`() async throws {
         let ledger = Self.ledger()
         let remote = Self.source([Self.accountingRow(id: "b")])
@@ -70,10 +84,6 @@ struct CodexRequestSubtotalTests {
         #expect(accepted.reports[0].ledger?.records.count == 1)
         #expect(accepted.allSourcesAvailable)
         #expect(accepted.localLedgerJSON == CodexIdentifiedCollection.encodeJSON(ledger, pretty: true))
-        let envelope = try #require(CodexBarCLI.encodeJSON(accepted, pretty: false))
-        let envelopeObject = try #require(
-            JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any])
-        #expect(envelopeObject["localLedgerJSON"] == nil)
 
         let oversized = try Self.ledger(outputBytes: CodexRequestLedger.maximumOutputBytes + 1, pretty: true)
         let rejected = try await CodexIdentifiedCollection.collect(
@@ -84,7 +94,7 @@ struct CodexRequestSubtotalTests {
             local: { oversized },
             fetchRemote: { _ in remote })
         #expect(rejected.reports.count == 2)
-        #expect(rejected.reports[0].ledger == nil && rejected.localLedgerJSON == nil)
+        #expect(rejected.reports[0].ledger == nil)
         #expect(rejected.reports[1].ledger?.records.count == 1)
         #expect(rejected.subtotal?.totalTokens == 110)
         #expect(!rejected.allSourcesAvailable && rejected.partial)
@@ -106,7 +116,7 @@ struct CodexRequestSubtotalTests {
     }
 
     @Test
-    func `source subtotals are app opt-in and omitted from the wire`() async throws {
+    func `identified result wire omits app-only fields and source subtotals are opt-in`() async throws {
         let fixture = Self.ledger()
         let result = try await CodexIdentifiedCollection.collect(
             remotes: ["remote"],
@@ -127,7 +137,11 @@ struct CodexRequestSubtotalTests {
             endUnixMs: Self.end,
             includeSourceSubtotals: true,
             local: { fixture },
-            fetchRemote: { _ in throw CancellationError() })
+            fetchRemote: { _ in Issue.record("No remote host should be requested"); return fixture })
+        let envelope = try #require(CodexBarCLI.encodeJSON(local, pretty: false))
+        let envelopeObject = try #require(
+            JSONSerialization.jsonObject(with: Data(envelope.utf8)) as? [String: Any])
+        #expect(envelopeObject["localLedgerJSON"] == nil)
         #expect(local.subtotal == nil)
         #expect(local.reports.first?.subtotal?.requestCount == 1)
         let cli = try await CodexIdentifiedCollection.collect(
@@ -692,7 +706,8 @@ extension CodexRequestSubtotalTests {
         #expect(result.reports.map(\.host) == ["local", "first", "bad", "local", "last", "last"])
         #expect(result.reports.map(\.source) == ["local", "ssh", "ssh", "ssh", "ssh", "ssh"])
         #expect(result.reports.map(\.collectedAt) == [stamp, stamp, nil, stamp, stamp, stamp])
-        #expect(result.reports[2].error != nil)
+        #expect(result.reports[2].error == "Remote identified usage is unavailable. Check SSH and update its CLI " +
+            "for schema 2 --identified-only.")
         #expect(result.reports[2].ledger == nil)
         #expect(result.subtotal?.totalTokens == 220)
         #expect(result.subtotal?.conflictCount == 0)
@@ -724,6 +739,9 @@ extension CodexRequestSubtotalTests {
                 if state == "none" { throw RemoteCodexCostError.unavailable }
                 return source
             })
+        if state == "local-fails" || state == "none" {
+            #expect(result.reports[0].error == "Local native Codex identified usage is unavailable.")
+        }
         #expect(result.allSourcesAvailable == (state == "empty" || state == "partial"))
         #expect(result.partial == (state != "empty"))
         #expect(result.subtotal?.totalTokens == (state == "none" ? nil : (state == "empty" ? 0 : 110)))

@@ -432,8 +432,9 @@ Last recorded tiers are estimates: live `/fast` changes may not be materialized 
 Every participating CLI must support schema 2. This opt-in mode does not change ordinary reports or account quota.
 
 Settings → Usage & Spend → **By machine** runs this collector only when opened, refreshed there, or its period
-changes while open. Select SSH aliases from the shared Agent Sessions host list, then press its Refresh; editing
-that list or selection cancels and clears the result. Removing and re-adding an alias requires fresh selection.
+changes while open. Select SSH aliases from the shared Agent Sessions host list, then press its Refresh; changing
+the selected cost hosts, including removing a selected alias from the shared list, cancels and clears the result.
+Removing and re-adding an alias requires fresh selection.
 This Mac always uses ambient `$CODEX_HOME` (or `~/.codex`); other configured homes are not scanned and mark local
 coverage partial. The detail uses UTC days, caps All at 365 days, and includes only identified requests.
 The existing collector limits remain 50,000 records and 32 MiB per source, with room for the export newline.
